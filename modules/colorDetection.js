@@ -1,10 +1,15 @@
 /**
  * Color detection and contour finding utilities using OpenCV.js.
- * Uses RGB color difference approach: a pixel is detected when each channel's
- * absolute difference from the target color is within the tolerance.
  *
- * Pipeline: Gaussian blur → BGR conversion → per-profile inRange (BGR ± tolerance)
- *           → morphology (open + close) → contour finding + area filtering.
+ * Detection pipeline (per profile):
+ *   1. Gaussian blur on the RGBA source (noise reduction)
+ *   2. Direct RGBA pixel comparison in JavaScript (no BGR conversion, no cv.inRange)
+ *   3. Morphology (open + close) to clean up the binary mask
+ *   4. Contour finding + area filtering
+ *
+ * This approach avoids cv.cvtColor, cv.inRange, and the full-size scalar Mat
+ * constructor — all of which have known compatibility issues across OpenCV.js
+ * CDN builds.
  */
 import { CONFIG } from '../config.js';
 
@@ -25,76 +30,63 @@ export function hexToRgb(hex) {
 }
 
 /**
- * Detects a color mask for a single color profile using RGB color difference.
- * A pixel is detected if each BGR channel's absolute difference from the target
- * color is within the tolerance.
+ * Builds a binary mask by comparing each pixel's RGBA channels against a
+ * target RGB color within a per-channel tolerance. Operates directly on the
+ * Uint8Array pixel buffer — no cv.cvtColor or cv.inRange needed.
  *
- * @param {cv.Mat} src - Source image Mat in RGBA format.
- * @param {{targetColor: string, tolerance: number}} profile - Color profile.
- * @returns {cv.Mat} Binary mask Mat (single channel, 0/255).
+ * @param {Uint8Array} rgba  - Source pixel data (RGBA interleaved).
+ * @param {number}     width - Image width in pixels.
+ * @param {number}     height - Image height in pixels.
+ * @param {number}     tr   - Target red   (0-255).
+ * @param {number}     tg   - Target green (0-255).
+ * @param {number}     tb   - Target blue  (0-255).
+ * @param {number}     tol  - Per-channel tolerance (0-255).
+ * @returns {Uint8Array} Single-channel mask (0 or 255 per pixel).
  */
-export function detectColorMask(src, profile) {
-  const { r, g, b } = hexToRgb(profile.targetColor);
-  const tol = profile.tolerance;
-
-  let bgr = null, blurred = null, mask = null;
-  let kernelSmall = null, kernelLarge = null, opened = null, closed = null;
-  try {
-    bgr = new cv.Mat();
-    cv.cvtColor(src, bgr, cv.COLOR_RGBA2BGR);
-
-    blurred = new cv.Mat();
-    cv.GaussianBlur(bgr, blurred, new cv.Size(7, 7), 0);
-
-    const low = new cv.Mat(blurred.rows, blurred.cols, blurred.type(), [
-      Math.max(0, b - tol), Math.max(0, g - tol), Math.max(0, r - tol), 0
-    ]);
-    const high = new cv.Mat(blurred.rows, blurred.cols, blurred.type(), [
-      Math.min(255, b + tol), Math.min(255, g + tol), Math.min(255, r + tol), 255
-    ]);
-    mask = new cv.Mat();
-    cv.inRange(blurred, low, high, mask);
-    low.delete();
-    high.delete();
-
-    kernelSmall = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
-    kernelLarge = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
-    opened = new cv.Mat();
-    cv.morphologyEx(mask, opened, cv.MORPH_OPEN, kernelSmall);
-    closed = new cv.Mat();
-    cv.morphologyEx(opened, closed, cv.MORPH_CLOSE, kernelLarge);
-
-    return closed.clone();
-  } finally {
-    if (bgr) bgr.delete();
-    if (blurred) blurred.delete();
-    if (mask) mask.delete();
-    if (kernelSmall) kernelSmall.delete();
-    if (kernelLarge) kernelLarge.delete();
-    if (opened) opened.delete();
-    if (closed) closed.delete();
+function buildMaskFromRgba(rgba, width, height, tr, tg, tb, tol) {
+  const total = width * height;
+  const mask = new Uint8Array(total);
+  for (let i = 0; i < total; i++) {
+    const off = i << 2; // i * 4
+    // RGBA layout: [R, G, B, A, R, G, B, A, ...]
+    const dr = rgba[off]     - tr;
+    const dg = rgba[off + 1] - tg;
+    const db = rgba[off + 2] - tb;
+    // Fast abs check: if |dr|<=tol && |dg|<=tol && |db|<=tol → 255
+    if (dr >= -tol && dr <= tol &&
+        dg >= -tol && dg <= tol &&
+        db >= -tol && db <= tol) {
+      mask[i] = 255;
+    }
+    // else mask[i] stays 0 (Uint8Array is zero-initialized)
   }
+  return mask;
 }
 
 /**
- * Optimized multi-profile detection using RGB color difference: converts to
- * BGR and blurs once, then runs inRange for each profile with ±tolerance.
+ * Optimized multi-profile detection.
+ * Blurs the RGBA source once, then builds a mask per profile using direct
+ * pixel comparison in JavaScript. Morphology cleanup is done via OpenCV.
  *
- * @param {cv.Mat} src - Source RGBA Mat.
- * @param {Array<{targetColor: string, tolerance: number}>} profiles - Array of color profiles.
- * @returns {Array<{profileIndex: number, mask: cv.Mat}>} Array of masks per profile.
+ * @param {Object} src      - Source RGBA cv.Mat (from cv.imread).
+ * @param {Array<{targetColor: string, tolerance: number}>} profiles - Color profiles.
+ * @returns {Array<{profileIndex: number, mask: Object}>} Array of {profileIndex, mask (cv.Mat)}.
  */
 export function detectColorMasks(src, profiles) {
-  let bgr = null, blurred = null;
+  let blurred = null;
   let kernelSmall = null, kernelLarge = null;
   const results = [];
+
   try {
-    bgr = new cv.Mat();
-    cv.cvtColor(src, bgr, cv.COLOR_RGBA2BGR);
-
+    // 1. Gaussian blur on the RGBA image (works on any channel count)
     blurred = new cv.Mat();
-    cv.GaussianBlur(bgr, blurred, new cv.Size(7, 7), 0);
+    cv.GaussianBlur(src, blurred, new cv.Size(5, 5), 0);
 
+    const w = blurred.cols;
+    const h = blurred.rows;
+    const rgba = blurred.data; // Uint8Array — RGBA interleaved
+
+    // 2. Morphology kernels (shared across profiles)
     kernelSmall = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
     kernelLarge = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
 
@@ -103,30 +95,27 @@ export function detectColorMasks(src, profiles) {
       const { r, g, b } = hexToRgb(p.targetColor);
       const tol = p.tolerance;
 
-      const low = new cv.Mat(blurred.rows, blurred.cols, blurred.type(), [
-        Math.max(0, b - tol), Math.max(0, g - tol), Math.max(0, r - tol), 0
-      ]);
-      const high = new cv.Mat(blurred.rows, blurred.cols, blurred.type(), [
-        Math.min(255, b + tol), Math.min(255, g + tol), Math.min(255, r + tol), 255
-      ]);
-      const mask = new cv.Mat();
-      cv.inRange(blurred, low, high, mask);
-      low.delete();
-      high.delete();
+      // 3. Build mask directly from RGBA pixels (JavaScript — no cv.inRange)
+      const maskBytes = buildMaskFromRgba(rgba, w, h, r, g, b, tol);
 
+      // 4. Wrap into a cv.Mat for morphology + contour finding
+      const rawMask = new cv.Mat(h, w, cv.CV_8UC1);
+      rawMask.data.set(maskBytes);
+
+      // 5. Morphology: open removes salt noise, close fills pepper gaps
       const opened = new cv.Mat();
-      cv.morphologyEx(mask, opened, cv.MORPH_OPEN, kernelSmall);
+      cv.morphologyEx(rawMask, opened, cv.MORPH_OPEN, kernelSmall);
       const closed = new cv.Mat();
       cv.morphologyEx(opened, closed, cv.MORPH_CLOSE, kernelLarge);
 
       results.push({ profileIndex: i, mask: closed.clone() });
-      mask.delete();
+
+      rawMask.delete();
       opened.delete();
       closed.delete();
     }
     return results;
   } finally {
-    if (bgr) bgr.delete();
     if (blurred) blurred.delete();
     if (kernelSmall) kernelSmall.delete();
     if (kernelLarge) kernelLarge.delete();
@@ -134,12 +123,25 @@ export function detectColorMasks(src, profiles) {
 }
 
 /**
+ * Single-profile convenience wrapper (kept for backward compatibility).
+ *
+ * @param {Object} src - Source RGBA cv.Mat.
+ * @param {{targetColor: string, tolerance: number}} profile - Color profile.
+ * @returns {Object} Binary mask cv.Mat (CV_8UC1, 0/255).
+ */
+export function detectColorMask(src, profile) {
+  const result = detectColorMasks(src, [profile]);
+  if (result.length > 0) return result[0].mask;
+  return cv.Mat.zeros(src.rows, src.cols, cv.CV_8UC1);
+}
+
+/**
  * Finds external contours in a binary mask and filters by minimum area.
  * Uses only proven, crash-safe OpenCV.js calls (findContours + contourArea).
  * Additional shape filtering (aspect ratio) is handled downstream in processContours.
  *
- * @param {cv.Mat} mask - Binary mask Mat (single channel, 0/255).
- * @returns {cv.MatVector} MatVector of contours passing area threshold.
+ * @param {Object} mask - Binary mask cv.Mat (single channel, 0/255).
+ * @returns {Object} cv.MatVector of contours passing area threshold.
  */
 export function findContours(mask) {
   let contours = null, hierarchy = null, filtered = null;

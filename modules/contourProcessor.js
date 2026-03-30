@@ -42,7 +42,15 @@ export function processContours(contours) {
 
       // Get corners from the rotated rectangle (4 precise corner points)
       const box = cv.boxPoints(rotatedRect);
-      const floatData = box.data32F || box.data64F;
+
+      // Robust float data extraction — data32F may not exist in all OpenCV.js builds
+      let floatData = box.data32F || box.data64F;
+      if (!floatData && box.data && box.data.buffer) {
+        // Fallback: interpret the raw Uint8Array as Float32 (boxPoints returns CV_32F)
+        try {
+          floatData = new Float32Array(box.data.buffer, box.data.byteOffset, 8);
+        } catch (_) { /* buffer access failed */ }
+      }
 
       // Guard: ensure box has valid float data (4 corners × 2 coords = 8 values)
       if (!floatData || floatData.length < 8) {

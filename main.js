@@ -285,13 +285,26 @@ function mainLoop() {
 
     // 3. Process each mask — isolated per profile so one failure doesn't kill all
     let allDetections = [];
+    const diagPerProfile = []; // for diagnostic logging
     for (const { profileIndex, mask } of masksInfo) {
       try {
         const profile = CONFIG.colorProfiles[profileIndex];
+
+        // Count non-zero pixels for diagnostics
+        const maskPixels = cv.countNonZero(mask);
+
         const contoursVec = findContours(mask);
+        const contourCount = contoursVec.size();
         const contours = [];
         for (let i = 0; i < contoursVec.size(); ++i) contours.push(contoursVec.get(i));
         const detected = processContours(contours);
+
+        diagPerProfile.push({
+          name: profile.name,
+          maskPx: maskPixels,
+          contours: contourCount,
+          shapes: detected.length
+        });
 
         // 4. Tag with profile info — coordinates are already in canvas space
         for (const obj of detected) {
@@ -340,7 +353,10 @@ function mainLoop() {
 
     // ── Diagnostic logging (throttled: every ~2s at 60fps) ──
     if (cleanupCounter % 120 === 0) {
-      console.log(`[detection] raw=${allDetections.length} stabilized=${stabilized.length} bodies=${bodyRegistry.size} balls=${getDynamicBodyCount()}`);
+      const profileSummary = diagPerProfile.map(
+        d => `${d.name}(px:${d.maskPx} cnt:${d.contours} shapes:${d.shapes})`
+      ).join(' ');
+      console.log(`[detection] ${profileSummary} → raw=${allDetections.length} stabilized=${stabilized.length} bodies=${bodyRegistry.size}`);
     }
 
     // 8. Debug overlay — always show detection rectangles; corner pin handles on D toggle
