@@ -144,6 +144,37 @@ export function initCornerPinUI(overlayCanvas, onUpdate) {
   overlayCanvas.addEventListener('mousedown', onMouseDown);
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
+
+  // ── Touch support ──
+  function getTouchPos(e) {
+    const t = e.touches[0] || e.changedTouches[0];
+    const rect = overlayCanvas.getBoundingClientRect();
+    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+  }
+  overlayCanvas.addEventListener('touchstart', e => {
+    const { x, y } = getTouchPos(e);
+    const idx = getHandleAt(x, y);
+    if (idx !== null) {
+      e.preventDefault();
+      draggingIdx = idx;
+      dragOffset.x = points[idx].x - x;
+      dragOffset.y = points[idx].y - y;
+    }
+  }, { passive: false });
+  overlayCanvas.addEventListener('touchmove', e => {
+    if (draggingIdx !== null) {
+      e.preventDefault();
+      const { x, y } = getTouchPos(e);
+      points[draggingIdx].x = Math.max(0, Math.min(overlayCanvas.width, x + dragOffset.x));
+      points[draggingIdx].y = Math.max(0, Math.min(overlayCanvas.height, y + dragOffset.y));
+      draw();
+      if (onUpdate) onUpdate(points.map(p => ({ ...p })));
+    }
+  }, { passive: false });
+  overlayCanvas.addEventListener('touchend', () => {
+    draggingIdx = null;
+  });
+
   draw();
 }
 

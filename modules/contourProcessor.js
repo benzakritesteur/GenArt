@@ -41,17 +41,16 @@ export function processContours(contours) {
  * Draws debug overlays for detected objects on a Canvas 2D context.
  *
  * @param {CanvasRenderingContext2D} ctx - Canvas 2D context to draw on.
- * @param {Array<{center: {x: number, y: number}, size: {width: number, height: number}, angle: number, corners: Array<{x: number, y: number}>}>} detectedObjects - Array of detected object info from processContours.
+ * @param {Array<{center: {x: number, y: number}, size: {width: number, height: number}, angle: number, corners: Array<{x: number, y: number}>, id?: number, displayColor?: string, profileName?: string}>} detectedObjects
  * @returns {void}
- * @example
- * drawDebugOverlay(ctx, detectedObjects);
  */
 export function drawDebugOverlay(ctx, detectedObjects) {
   ctx.save();
   ctx.lineWidth = 2;
   for (const obj of detectedObjects) {
+    const color = obj.displayColor || 'lime';
     // Draw rotated bounding box
-    ctx.strokeStyle = 'lime';
+    ctx.strokeStyle = color;
     ctx.beginPath();
     ctx.moveTo(obj.corners[0].x, obj.corners[0].y);
     for (let i = 1; i < 4; ++i) {
@@ -64,12 +63,15 @@ export function drawDebugOverlay(ctx, detectedObjects) {
     ctx.beginPath();
     ctx.arc(obj.center.x, obj.center.y, 4, 0, 2 * Math.PI);
     ctx.fill();
-    // Draw angle text
+    // Draw info text (ID, angle, profile name)
     ctx.fillStyle = 'white';
-    ctx.font = '14px monospace';
+    ctx.font = '12px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(obj.angle.toFixed(1) + '°', obj.center.x, obj.center.y + 8);
+    const label = (obj.id != null ? `#${obj.id} ` : '') +
+                  obj.angle.toFixed(1) + '°' +
+                  (obj.profileName ? ` [${obj.profileName}]` : '');
+    ctx.fillText(label, obj.center.x, obj.center.y + 8);
   }
   ctx.restore();
 }

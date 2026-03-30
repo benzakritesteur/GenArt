@@ -108,6 +108,7 @@ export function stabilizeObjects(newDetections) {
 
   // Return stabilized objects (in order of trackedObjects)
   return Array.from(trackedObjects.values()).map(obj => ({
+    id: obj.id,
     center: { ...obj.center },
     size: { ...obj.size },
     angle: obj.angle,

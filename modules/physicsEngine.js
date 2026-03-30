@@ -1,25 +1,24 @@
 /**
  * Physics engine integration using Matter.js for real-time projection mapping.
- * Uses global Matter object and project CONFIG.
+ * Supports static colliders from detection AND dynamic spawned bodies.
  */
 import { CONFIG } from '../config.js';
+
+/** @type {Set<Matter.Body>} */
+const dynamicBodies = new Set();
 
 /**
  * Initializes the Matter.js physics engine, world, and renderer.
  *
- * @param {HTMLCanvasElement} renderCanvas - Canvas element for Matter.js rendering.
+ * @param {HTMLCanvasElement} renderCanvas
  * @returns {{ engine: Matter.Engine, world: Matter.World, runner: Matter.Runner, render: Matter.Render }}
- * @example
- * const { engine, world, runner, render } = initPhysics(canvas);
  */
 export function initPhysics(renderCanvas) {
-  // Create engine and world
   const engine = Matter.Engine.create();
   const world = engine.world;
   engine.gravity.x = 0;
   engine.gravity.y = 1;
 
-  // Create renderer
   const render = Matter.Render.create({
     canvas: renderCanvas,
     engine,
@@ -39,31 +38,14 @@ export function initPhysics(renderCanvas) {
     }
   });
 
-  // Add static boundaries (floor, left, right walls)
-  const floor = Matter.Bodies.rectangle(
-    CONFIG.canvasWidth / 2,
-    CONFIG.canvasHeight + 25,
-    CONFIG.canvasWidth,
-    50,
-    { isStatic: true, render: { visible: false } }
-  );
-  const leftWall = Matter.Bodies.rectangle(
-    -25,
-    CONFIG.canvasHeight / 2,
-    50,
-    CONFIG.canvasHeight,
-    { isStatic: true, render: { visible: false } }
-  );
-  const rightWall = Matter.Bodies.rectangle(
-    CONFIG.canvasWidth + 25,
-    CONFIG.canvasHeight / 2,
-    50,
-    CONFIG.canvasHeight,
-    { isStatic: true, render: { visible: false } }
-  );
-  Matter.World.add(world, [floor, leftWall, rightWall]);
+  // Boundaries: floor, left, right, ceiling
+  const wallOpts = { isStatic: true, render: { visible: false } };
+  const floor = Matter.Bodies.rectangle(CONFIG.canvasWidth / 2, CONFIG.canvasHeight + 25, CONFIG.canvasWidth, 50, wallOpts);
+  const leftWall = Matter.Bodies.rectangle(-25, CONFIG.canvasHeight / 2, 50, CONFIG.canvasHeight, wallOpts);
+  const rightWall = Matter.Bodies.rectangle(CONFIG.canvasWidth + 25, CONFIG.canvasHeight / 2, 50, CONFIG.canvasHeight, wallOpts);
+  const ceiling = Matter.Bodies.rectangle(CONFIG.canvasWidth / 2, -25, CONFIG.canvasWidth, 50, wallOpts);
+  Matter.World.add(world, [floor, leftWall, rightWall, ceiling]);
 
-  // Start engine and renderer
   const runner = Matter.Runner.create();
   Matter.Runner.run(runner, engine);
   Matter.Render.run(render);
@@ -71,36 +53,81 @@ export function initPhysics(renderCanvas) {
   return { engine, world, runner, render };
 }
 
+// ── Dynamic body helpers ──
+
+const PALETTE = ['#6cf', '#fc6', '#f66', '#6f6', '#c6f', '#ff6', '#6ff'];
+
+/**
+ * Spawn a dynamic circle at (x, y).
+ * @param {Matter.World} world
+ * @param {number} x
+ * @param {number} y
+ */
+export function spawnDynamicBody(world, x, y) {
+  if (dynamicBodies.size >= CONFIG.maxDynamicBodies) return;
+  const r = CONFIG.dynamicBodyRadius + Math.random() * 6;
+  const color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  const body = Matter.Bodies.circle(x, y, r, {
+    isStatic: false,
+    restitution: 0.6,
+    friction: 0.3,
+    render: { fillStyle: color }
+  });
+  Matter.World.add(world, body);
+  dynamicBodies.add(body);
+}
+
+/**
+ * Remove off-screen or excess dynamic bodies.
+ * @param {Matter.World} world
+ */
+export function cleanupDynamicBodies(world) {
+  for (const body of dynamicBodies) {
+    const { x, y } = body.position;
+    if (y > CONFIG.canvasHeight + 100 || y < -100 || x < -100 || x > CONFIG.canvasWidth + 100) {
+      Matter.World.remove(world, body);
+      dynamicBodies.delete(body);
+    }
+  }
+  // enforce cap
+  if (dynamicBodies.size > CONFIG.maxDynamicBodies) {
+    const excess = [...dynamicBodies].slice(0, dynamicBodies.size - CONFIG.maxDynamicBodies);
+    for (const b of excess) {
+      Matter.World.remove(world, b);
+      dynamicBodies.delete(b);
+    }
+  }
+}
+
+/** @returns {number} */
+export function getDynamicBodyCount() { return dynamicBodies.size; }
+
+/** @returns {Set<Matter.Body>} */
+export function getDynamicBodies() { return dynamicBodies; }
+
 /**
  * Synchronizes Matter.js static bodies with stabilized detected objects.
  *
- * @param {Matter.World} world - The Matter.js world.
- * @param {Array<{center: {x: number, y: number}, size: {width: number, height: number}, angle: number, corners: Array<{x: number, y: number}>, id?: number}>} stabilizedObjects - Array of stabilized objects (must include unique id).
- * @param {Map<number, Matter.Body>} bodyRegistry - Map of tracked object IDs to Matter bodies.
- * @returns {void}
- * @example
- * syncPhysicsBodies(world, stabilizedObjects, bodyRegistry);
+ * @param {Matter.World} world
+ * @param {Array<{center: {x: number, y: number}, size: {width: number, height: number}, angle: number, corners: Array<{x: number, y: number}>, id?: number}>} stabilizedObjects
+ * @param {Map<number, Matter.Body>} bodyRegistry
  */
 export function syncPhysicsBodies(world, stabilizedObjects, bodyRegistry) {
-  // Helper: Euclidean distance
   function dist(a, b) {
     const dx = a.x - b.x;
     const dy = a.y - b.y;
     return Math.sqrt(dx * dx + dy * dy);
   }
 
-  // Track which IDs are present
   const currentIds = new Set();
 
   for (const obj of stabilizedObjects) {
-    // Require a unique id for each stabilized object
     const id = obj.id;
     if (typeof id !== 'number') continue;
     currentIds.add(id);
     let body = bodyRegistry.get(id);
     const vertices = obj.corners.map(pt => ({ x: pt.x, y: pt.y }));
     if (!body) {
-      // Create new static body from 4 corners
       body = Matter.Bodies.fromVertices(
         obj.center.x,
         obj.center.y,
@@ -111,7 +138,6 @@ export function syncPhysicsBodies(world, stabilizedObjects, bodyRegistry) {
       Matter.World.add(world, body);
       bodyRegistry.set(id, body);
     } else {
-      // Update position/angle if changed beyond tolerance
       const d = dist(obj.center, body.position);
       const angleDelta = Math.abs(obj.angle - body.angle * 180 / Math.PI);
       if (d > CONFIG.stabilizerTolerance || angleDelta > 5) {
@@ -121,7 +147,6 @@ export function syncPhysicsBodies(world, stabilizedObjects, bodyRegistry) {
     }
   }
 
-  // Remove bodies for IDs no longer present
   for (const [id, body] of bodyRegistry.entries()) {
     if (!currentIds.has(id)) {
       Matter.World.remove(world, body);
@@ -129,4 +154,3 @@ export function syncPhysicsBodies(world, stabilizedObjects, bodyRegistry) {
     }
   }
 }
-

@@ -2,25 +2,36 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
   <title>GenArt - Real-Time Projection Mapping</title>
   <style>
-    html, body { margin: 0; padding: 0; background: #111; }
-    #physicsCanvas, #debugCanvas {
+    html, body { margin: 0; padding: 0; background: #111; overflow: hidden; width: 100%; height: 100%; }
+    /* All visible layers fill the viewport */
+    #physicsCanvas, #debugCanvas, #webglCanvas, #video {
       position: absolute; top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      object-fit: cover;
       display: block;
-      pointer-events: none;
     }
-    #debugCanvas { z-index: 10; }
-    /* Show the video for debugging camera issues */
+    #physicsCanvas {
+      z-index: 1;
+      pointer-events: none;
+      background: transparent;
+    }
+    #webglCanvas {
+      z-index: 2;
+      pointer-events: none;
+      background: transparent;
+      display: none;
+    }
+    #debugCanvas {
+      z-index: 10;
+      pointer-events: auto;
+      touch-action: none;
+    }
     #video {
-      position: absolute;
-      top: 0; left: 0;
-      width: 320px;
-      height: 240px;
-      z-index: 100;
-      background: #222;
-      border: 2px solid #6cf;
-      display: block;
+      z-index: 0;
+      background: #111;
     }
   </style>
   <!-- OpenCV.js CDN -->
@@ -33,6 +44,7 @@
   <video id="video" autoplay playsinline muted></video>
   <canvas id="captureCanvas" style="display:none"></canvas>
   <canvas id="physicsCanvas"></canvas>
+  <canvas id="webglCanvas"></canvas>
   <canvas id="debugCanvas"></canvas>
   <script type="module" src="./main.js"></script>
 </body>
