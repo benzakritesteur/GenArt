@@ -25,13 +25,51 @@ let physics = null;
 let fpsTick = null;
 
 /**
- * Waits for OpenCV.js to be ready by listening for the global onOpenCvReady callback.
+ * Waits for OpenCV.js to be ready.
+ * Handles multiple OpenCV.js loading patterns:
+ *  - Already loaded (cv.Mat exists)
+ *  - Global onOpenCvReady callback
+ *  - cv returned as a Promise (OpenCV.js 4.5.5+)
+ *  - Polling fallback
  * @returns {Promise<void>}
  */
 function waitForOpenCvReady() {
-  return new Promise(resolve => {
-    if (window.cv && window.cv.Mat) return resolve();
-    window.onOpenCvReady = () => resolve();
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+    const done = () => {
+      if (!resolved) { resolved = true; resolve(); }
+    };
+
+    // Already fully loaded
+    if (window.cv && window.cv.Mat) return done();
+
+    // cv may be a Promise in newer OpenCV.js builds (4.5.5+)
+    if (window.cv && typeof window.cv.then === 'function') {
+      window.cv.then(cvModule => { window.cv = cvModule; done(); });
+      return;
+    }
+
+    // Legacy callback
+    window.onOpenCvReady = () => done();
+
+    // Polling fallback (covers builds that fire no callback)
+    const timeout = 30000; // 30 s max wait
+    const start = Date.now();
+    const id = setInterval(() => {
+      if (window.cv && window.cv.Mat) {
+        clearInterval(id);
+        done();
+      } else if (window.cv && typeof window.cv.then === 'function') {
+        clearInterval(id);
+        window.cv.then(cvModule => { window.cv = cvModule; done(); });
+      } else if (Date.now() - start > timeout) {
+        clearInterval(id);
+        if (!resolved) {
+          resolved = true;
+          reject(new Error('OpenCV.js failed to load within 30 seconds'));
+        }
+      }
+    }, 50);
   });
 }
 
@@ -188,4 +226,11 @@ sliderDefs.forEach(({ key, min, max, step, label }) => {
 });
 
 // Start system
-init();
+init().catch(err => {
+  console.error('Init failed:', err);
+  const errDiv = document.getElementById('cameraError');
+  if (errDiv) {
+    errDiv.textContent = 'Initialization failed: ' + (err && err.message ? err.message : err);
+    errDiv.style.display = 'block';
+  }
+});
