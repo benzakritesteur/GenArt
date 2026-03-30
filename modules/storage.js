@@ -23,8 +23,6 @@ function snapshot() {
     maxDynamicBodies: CONFIG.maxDynamicBodies,
     autoSpawnEnabled: CONFIG.autoSpawnEnabled,
     dynamicBodyRadius: CONFIG.dynamicBodyRadius,
-    useWebGL: CONFIG.useWebGL,
-    enabledPlugins: [...CONFIG.enabledPlugins],
   };
 }
 
@@ -40,14 +38,10 @@ function mergeIntoConfig(data) {
   const scalars = [
     'minContourArea', 'stabilizerTolerance', 'stabilizerFreezeFrames',
     'canvasWidth', 'canvasHeight',
-    'spawnInterval', 'maxDynamicBodies', 'autoSpawnEnabled', 'dynamicBodyRadius',
-    'useWebGL'
+    'spawnInterval', 'maxDynamicBodies', 'autoSpawnEnabled', 'dynamicBodyRadius'
   ];
   for (const key of scalars) {
     if (data[key] !== undefined) CONFIG[key] = data[key];
-  }
-  if (Array.isArray(data.enabledPlugins)) {
-    CONFIG.enabledPlugins = [...data.enabledPlugins];
   }
   if (Array.isArray(data.cornerPin) && data.cornerPin.length === 4) {
     CONFIG.cornerPin = data.cornerPin.map(p => ({ ...p }));

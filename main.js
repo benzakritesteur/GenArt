@@ -7,24 +7,17 @@ import { detectColorMasks, findContours } from './modules/colorDetection.js';
 import { processContours, drawDebugOverlay } from './modules/contourProcessor.js';
 import { buildPerspectiveTransform, warpPoints, initCornerPinUI } from './modules/cornerPin.js';
 import { stabilizeObjects } from './modules/stabilizer.js';
-import { initPhysics, syncPhysicsBodies, spawnDynamicBody, cleanupDynamicBodies, getDynamicBodyCount, getDynamicBodies } from './modules/physicsEngine.js';
+import { initPhysics, syncPhysicsBodies, spawnDynamicBody, cleanupDynamicBodies, getDynamicBodyCount } from './modules/physicsEngine.js';
 import { CONFIG } from './config.js';
 import { createFPSMonitor } from './modules/utils.js';
 import { saveCalibration, loadCalibration, clearCalibration, exportPreset, importPreset } from './modules/storage.js';
-import { PluginManager } from './modules/pluginSystem.js';
-import { initWebGL, uploadVideoFrame, renderMaskOverlay, renderParticles, clearWebGL, destroyWebGL } from './modules/webglRenderer.js';
-import collisionSparkPlugin from './plugins/collisionSpark.js';
-import trailEffectPlugin from './plugins/trailEffect.js';
 
 // ─── DOM elements ───
 const video = document.getElementById('video');
 const captureCanvas = document.getElementById('captureCanvas');
 const debugCanvas = document.getElementById('debugCanvas');
 const physicsCanvas = document.getElementById('physicsCanvas');
-const webglCanvas = document.getElementById('webglCanvas');
 const debugCtx = debugCanvas.getContext('2d');
-// Create capture context once with willReadFrequently for cv.imread performance
-const captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
 
 let showDebug = true;
 let currentTransformMat = null;
@@ -32,12 +25,6 @@ const bodyRegistry = new Map();
 let physics = null;
 let fpsTick = null;
 let spawnTimerId = null;
-
-// ── Plugin system ──
-const pluginManager = new PluginManager();
-
-// ── WebGL renderer ──
-let webglRenderer = null;
 
 // ═════════════════════════════════════════════
 // OpenCV ready
@@ -82,7 +69,7 @@ async function init() {
   physicsCanvas.style.background = 'transparent';
 
   // Canvas internal resolution
-  [captureCanvas, debugCanvas, physicsCanvas, webglCanvas].forEach(c => {
+  [captureCanvas, debugCanvas, physicsCanvas].forEach(c => {
     c.width = CONFIG.canvasWidth;
     c.height = CONFIG.canvasHeight;
   });
@@ -91,7 +78,7 @@ async function init() {
   function resizeToViewport() {
     const vw = window.innerWidth + 'px';
     const vh = window.innerHeight + 'px';
-    [physicsCanvas, debugCanvas, webglCanvas].forEach(c => {
+    [physicsCanvas, debugCanvas].forEach(c => {
       c.style.width = vw;
       c.style.height = vh;
     });
@@ -145,33 +132,6 @@ async function init() {
   // Auto-spawn timer
   startAutoSpawn();
 
-  // ── Register plugins ──
-  const pluginCtx = { engine: physics.engine };
-  // Wrap init/destroy to receive engine context
-  const wrapPlugin = (p) => ({
-    ...p,
-    init: () => p.hooks.onInit?.(pluginCtx),
-    destroy: () => p.hooks.onDestroy?.(pluginCtx),
-  });
-  pluginManager.register(wrapPlugin(collisionSparkPlugin));
-  pluginManager.register(wrapPlugin(trailEffectPlugin));
-  // Restore enabled state from config
-  for (const p of pluginManager.list()) {
-    pluginManager.toggle(p.name, CONFIG.enabledPlugins.includes(p.name));
-  }
-
-  // ── WebGL init ──
-  applyWebGLMode();
-
-  // ── Cleanup on page unload ──
-  window.addEventListener('beforeunload', () => {
-    pluginManager.run('onDestroy', pluginCtx);
-    if (webglRenderer) { destroyWebGL(webglRenderer); webglRenderer = null; }
-  });
-
-  // Rebuild UI to reflect plugin state
-  buildCalibrationUI();
-
   requestAnimationFrame(mainLoop);
 }
 
@@ -189,30 +149,6 @@ function stopAutoSpawn() {
   if (spawnTimerId) { clearInterval(spawnTimerId); spawnTimerId = null; }
 }
 
-// ── WebGL mode toggling ──
-function applyWebGLMode() {
-  if (CONFIG.useWebGL) {
-    try {
-      if (!webglRenderer) webglRenderer = initWebGL(webglCanvas);
-      webglCanvas.style.display = 'block';
-      // Hide Matter.js renderer, keep engine running
-      if (physics?.render) Matter.Render.stop(physics.render);
-      physicsCanvas.style.display = 'none';
-    } catch (e) {
-      console.warn('[WebGL] Fallback to Canvas2D:', e.message);
-      CONFIG.useWebGL = false;
-      webglCanvas.style.display = 'none';
-      physicsCanvas.style.display = 'block';
-      if (physics?.render) Matter.Render.run(physics.render);
-    }
-  } else {
-    if (webglRenderer) { destroyWebGL(webglRenderer); webglRenderer = null; }
-    webglCanvas.style.display = 'none';
-    physicsCanvas.style.display = 'block';
-    if (physics?.render) Matter.Render.run(physics.render);
-  }
-}
-
 // ═════════════════════════════════════════════
 // Main Loop — multi-color detection
 // ═════════════════════════════════════════════
@@ -221,15 +157,8 @@ let cleanupCounter = 0;
 function mainLoop() {
   if (fpsTick) fpsTick();
 
-  // Plugin hook: before frame
-  pluginManager.run('onBeforeFrame', { video, captureCanvas });
-
-  // 1. Capture frame — skip if video not ready
-  if (video.readyState < 2) {
-    requestAnimationFrame(mainLoop);
-    return;
-  }
-  captureFrame(video, captureCanvas, captureCtx);
+  // 1. Capture frame
+  captureFrame(video, captureCanvas, captureCanvas.getContext('2d'));
 
   let src = null;
   try {
@@ -242,25 +171,16 @@ function mainLoop() {
     let allDetections = [];
     for (const { profileIndex, mask } of masksInfo) {
       const profile = CONFIG.colorProfiles[profileIndex];
-      const contours = findContours(mask);
+      const contoursVec = findContours(mask);
+      const contours = [];
+      for (let i = 0; i < contoursVec.size(); ++i) contours.push(contoursVec.get(i));
       const detected = processContours(contours);
 
       // 4. Warp + tag with profile info
       for (const obj of detected) {
         const warpedCorners = warpPoints(obj.corners, currentTransformMat);
-        // Recompute center, size, angle from warped corners (canvas-space)
-        const cx = warpedCorners.reduce((s, p) => s + p.x, 0) / 4;
-        const cy = warpedCorners.reduce((s, p) => s + p.y, 0) / 4;
-        const edgeLen = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
-        const w = edgeLen(warpedCorners[0], warpedCorners[1]);
-        const h = edgeLen(warpedCorners[1], warpedCorners[2]);
-        const dx = warpedCorners[1].x - warpedCorners[0].x;
-        const dy = warpedCorners[1].y - warpedCorners[0].y;
-        const warpedAngle = Math.atan2(dy, dx) * 180 / Math.PI;
         allDetections.push({
-          center: { x: cx, y: cy },
-          size: { width: w, height: h },
-          angle: warpedAngle,
+          ...obj,
           corners: warpedCorners,
           profileIndex,
           profileName: profile.name,
@@ -270,17 +190,16 @@ function mainLoop() {
 
       // Cleanup OpenCV mats
       mask.delete();
+      contoursVec.delete();
       contours.forEach(c => c.delete());
     }
-
-    // Plugin hook: after detection
-    pluginManager.run('onAfterDetection', { detections: allDetections });
 
     // 5. Stabilize
     const stabilized = stabilizeObjects(allDetections);
 
-    // Propagate display info from detections to stabilized
+    // Propagate display info from detections to stabilized (by matching id)
     for (const s of stabilized) {
+      // Find closest detection to keep displayColor
       let best = null, bestDist = Infinity;
       for (const d of allDetections) {
         const dx = d.center.x - s.center.x, dy = d.center.y - s.center.y;
@@ -293,34 +212,12 @@ function mainLoop() {
       }
     }
 
-    // Plugin hook: after stabilize
-    pluginManager.run('onAfterStabilize', { stabilized });
-
     // 6. Sync physics
     syncPhysicsBodies(physics.world, stabilized, bodyRegistry);
 
-    const dynamicBodies = getDynamicBodies();
-
-    // Plugin hook: after physics sync
-    pluginManager.run('onAfterPhysicsSync', { dynamicBodies, stabilized, world: physics.world });
-
-    // 7. Rendering
+    // 7. Debug overlay
     debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-
-    if (CONFIG.useWebGL && webglRenderer) {
-      // WebGL path: GPU mask overlay + particle rendering
-      clearWebGL(webglRenderer);
-      uploadVideoFrame(webglRenderer, video);
-      for (const profile of CONFIG.colorProfiles) {
-        renderMaskOverlay(webglRenderer, profile);
-      }
-      renderParticles(webglRenderer, dynamicBodies, CONFIG.canvasWidth, CONFIG.canvasHeight);
-    }
-
     if (showDebug) drawDebugOverlay(debugCtx, stabilized);
-
-    // Plugin hook: render (plugins draw on debug canvas)
-    pluginManager.run('onRender', { ctx: debugCtx });
 
     // 8. Periodic cleanup of dynamic bodies
     if (++cleanupCounter % 60 === 0) {
@@ -342,10 +239,7 @@ function mainLoop() {
 let saveTimer = null;
 function debouncedSave() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveCalibration();
-    pluginManager.run('onConfigChange', { CONFIG });
-  }, 500);
+  saveTimer = setTimeout(() => saveCalibration(), 500);
 }
 
 // ═════════════════════════════════════════════
@@ -521,60 +415,6 @@ function buildCalibrationUI() {
   addSliderRow(panel, 'Radius', CONFIG.dynamicBodyRadius, 4, 40, 1, v => {
     CONFIG.dynamicBodyRadius = v; debouncedSave();
   });
-
-  // ── Separator ──
-  panel.appendChild(Object.assign(document.createElement('hr'), { style: { border: '0', borderTop: '1px solid #444', margin: '10px 0' } }));
-
-  // ── WebGL toggle ──
-  const webglTitle = document.createElement('div');
-  webglTitle.textContent = '⚡ Rendering';
-  webglTitle.style.cssText = 'font-weight:bold;margin-bottom:6px;';
-  panel.appendChild(webglTitle);
-
-  const webglRow = document.createElement('div');
-  webglRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
-  const webglCheck = document.createElement('input');
-  webglCheck.type = 'checkbox'; webglCheck.checked = CONFIG.useWebGL;
-  webglCheck.onchange = () => {
-    CONFIG.useWebGL = webglCheck.checked;
-    applyWebGLMode();
-    pluginManager.run('onConfigChange', { key: 'useWebGL', value: CONFIG.useWebGL });
-    debouncedSave();
-  };
-  webglRow.appendChild(webglCheck);
-  const webglLbl = document.createElement('span');
-  webglLbl.textContent = 'WebGL accelerated rendering';
-  webglLbl.style.fontSize = '12px';
-  webglRow.appendChild(webglLbl);
-  panel.appendChild(webglRow);
-
-  // ── Separator ──
-  panel.appendChild(Object.assign(document.createElement('hr'), { style: { border: '0', borderTop: '1px solid #444', margin: '10px 0' } }));
-
-  // ── Plugins ──
-  const plugTitle = document.createElement('div');
-  plugTitle.textContent = '🔌 Plugins';
-  plugTitle.style.cssText = 'font-weight:bold;margin-bottom:6px;';
-  panel.appendChild(plugTitle);
-
-  for (const p of pluginManager.list()) {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:3px;';
-    const chk = document.createElement('input');
-    chk.type = 'checkbox'; chk.checked = p.enabled;
-    chk.onchange = () => {
-      pluginManager.toggle(p.name, chk.checked);
-      CONFIG.enabledPlugins = pluginManager.list().filter(x => x.enabled).map(x => x.name);
-      debouncedSave();
-    };
-    row.appendChild(chk);
-    const info = document.createElement('span');
-    info.style.fontSize = '11px';
-    info.innerHTML = `<b>${p.name}</b> <span style="color:#888">v${p.version}</span>`;
-    if (p.description) info.innerHTML += ` — <span style="color:#aaa">${p.description}</span>`;
-    row.appendChild(info);
-    panel.appendChild(row);
-  }
 
   // ── Separator ──
   panel.appendChild(Object.assign(document.createElement('hr'), { style: { border: '0', borderTop: '1px solid #444', margin: '10px 0' } }));

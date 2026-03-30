@@ -51,8 +51,8 @@ export const CONFIG = {
   /** @type {number} */ minContourArea: 500,
 
   // ── Stabilizer ──
-  /** @type {number} */ stabilizerTolerance: 50,
-  /** @type {number} */ stabilizerFreezeFrames: 15,
+  /** @type {number} */ stabilizerTolerance: 8,
+  /** @type {number} */ stabilizerFreezeFrames: 10,
 
   // ── Canvas ──
   /** @type {number} */ canvasWidth: 1280,
@@ -72,10 +72,4 @@ export const CONFIG = {
   /** @type {number} */ maxDynamicBodies: 80,
   /** @type {boolean} */ autoSpawnEnabled: true,
   /** @type {number} */ dynamicBodyRadius: 12,
-
-  // ── Rendering ──
-  /** @type {boolean} */ useWebGL: false,
-
-  // ── Plugins ──
-  /** @type {string[]} */ enabledPlugins: ['collisionSpark', 'trailEffect'],
 };

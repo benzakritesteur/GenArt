@@ -15,33 +15,24 @@ export function processContours(contours) {
   if (!Array.isArray(contours)) throw new Error('contours must be an array of cv.Mat');
   const results = [];
   for (const contour of contours) {
-    try {
-      const rotatedRect = cv.minAreaRect(contour);
-      const { center, size, angle } = rotatedRect;
-      const box = cv.boxPoints(rotatedRect);
-      // Guard: skip if boxPoints returned an invalid/empty Mat
-      if (!box || !box.data32F || box.data32F.length < 8) {
-        if (box) box.delete();
-        continue;
-      }
-      const corners = [];
-      for (let i = 0; i < 4; ++i) {
-        corners.push({
-          x: box.data32F[i * 2],
-          y: box.data32F[i * 2 + 1]
-        });
-      }
-      box.delete();
-      results.push({
-        center: { x: center.x, y: center.y },
-        size: { width: size.width, height: size.height },
-        angle,
-        corners
+    const rotatedRect = cv.minAreaRect(contour);
+    const { center, size, angle } = rotatedRect;
+    // boxPoints returns a Mat of shape [4,1,2] (float32)
+    const box = cv.boxPoints(rotatedRect);
+    const corners = [];
+    for (let i = 0; i < 4; ++i) {
+      corners.push({
+        x: box.data32F[i * 2],
+        y: box.data32F[i * 2 + 1]
       });
-    } catch (e) {
-      // Skip contours that cause OpenCV errors (degenerate shapes, etc.)
-      continue;
     }
+    box.delete();
+    results.push({
+      center: { x: center.x, y: center.y },
+      size: { width: size.width, height: size.height },
+      angle,
+      corners
+    });
   }
   return results;
 }

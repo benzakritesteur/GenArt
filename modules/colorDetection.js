@@ -86,24 +86,26 @@ export function detectColorMasks(src, profiles) {
  * Finds external contours in a binary mask and filters by minimum area.
  *
  * @param {cv.Mat} mask - Binary mask Mat (single channel, 0/255).
- * @returns {cv.Mat[]} Array of contour Mats (caller must delete each one).
+ * @returns {cv.MatVector} MatVector of contours passing area threshold.
  */
 export function findContours(mask) {
-  const contours = new cv.MatVector();
-  const hierarchy = new cv.Mat();
-  cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-  hierarchy.delete();
-
-  // Extract valid contours as standalone clones, then free the original vector
-  const result = [];
-  for (let i = 0; i < contours.size(); ++i) {
-    const cnt = contours.get(i);
-    const area = cv.contourArea(cnt);
-    if (area >= CONFIG.minContourArea) {
-      result.push(cnt.clone());
+  let contours = null, hierarchy = null, filtered = null;
+  try {
+    contours = new cv.MatVector();
+    hierarchy = new cv.Mat();
+    cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    filtered = new cv.MatVector();
+    for (let i = 0; i < contours.size(); ++i) {
+      const cnt = contours.get(i);
+      const area = cv.contourArea(cnt);
+      if (area >= CONFIG.minContourArea) {
+        filtered.push_back(cnt);
+      }
+      cnt.delete();
     }
-    cnt.delete();
+    return filtered;
+  } finally {
+    if (contours) contours.delete();
+    if (hierarchy) hierarchy.delete();
   }
-  contours.delete();
-  return result;
 }

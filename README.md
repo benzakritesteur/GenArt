@@ -24,9 +24,6 @@
 - **Save/Load Calibration** — persist all settings to localStorage
 - **Export/Import Config Presets** — download/upload JSON preset files
 - **Touch & Mobile Support** — full touch events for corner pin and spawning
-- **WebGL-Accelerated Rendering** — optional GPU HSV mask overlay + particle point-sprite rendering
-- **Modular Plugin System** — hook-based architecture with example plugins (collision sparks, trails)
-- **Automated Test Suite** — browser-based test runner with unit tests for all core modules
 - **Debug Overlay & FPS/Memory HUD**
 - **No Bundler, No Frameworks: 100% Vanilla JS, ES Modules**
 
@@ -49,31 +46,17 @@
 ```text
 project/
 ├── index.html                # Entry point, loads all scripts via <script type="module">
-├── main.js                   # Main orchestrator (init, loop, UI, plugins, WebGL toggle)
-├── config.js                 # Global CONFIG object (profiles, canvas, physics, WebGL, plugins)
-├── modules/
-│   ├── camera.js             # Webcam capture utilities
-│   ├── colorDetection.js     # Multi-color HSV masking & contour finding (OpenCV.js)
-│   ├── contourProcessor.js   # Bounding box, angle extraction (OpenCV.js)
-│   ├── cornerPin.js          # Perspective transform & UI with touch support (OpenCV.js)
-│   ├── physicsEngine.js      # Matter.js world, static collider sync, dynamic body spawning
-│   ├── pluginSystem.js       # Hook-based plugin manager
-│   ├── stabilizer.js         # Jitter prevention & object tracking
-│   ├── storage.js            # Save/load calibration (localStorage) + export/import (JSON)
-│   ├── utils.js              # FPS/memory HUD and other utilities
-│   └── webglRenderer.js      # WebGL2 GPU-accelerated HSV mask + particle renderer
-├── plugins/
-│   ├── collisionSpark.js     # Example plugin: visual sparks on collisions
-│   └── trailEffect.js        # Example plugin: particle motion trails
-└── tests/
-    ├── index.html            # Browser-based test runner page
-    ├── testRunner.js          # Minimal assertion library & test framework
-    ├── config.test.js
-    ├── stabilizer.test.js
-    ├── storage.test.js
-    ├── pluginSystem.test.js
-    ├── contourProcessor.test.js
-    └── webglRenderer.test.js
+├── main.js                   # Main orchestrator (init, loop, UI, multi-color, physics controls)
+├── config.js                 # Global CONFIG object (color profiles, canvas, stabilizer, physics, etc.)
+└── modules/
+    ├── camera.js             # Webcam capture utilities
+    ├── colorDetection.js     # Multi-color HSV masking & contour finding (OpenCV.js)
+    ├── contourProcessor.js   # Bounding box, angle extraction (OpenCV.js)
+    ├── cornerPin.js          # Perspective transform & UI with touch support (OpenCV.js)
+    ├── physicsEngine.js      # Matter.js world, static collider sync, dynamic body spawning
+    ├── stabilizer.js         # Jitter prevention & object tracking
+    ├── storage.js            # Save/load calibration (localStorage) + export/import presets (JSON)
+    └── utils.js              # FPS/memory HUD and other utilities
 ```
 
 ### Module Descriptions
@@ -85,11 +68,9 @@ project/
 | contourProcessor.js | Rotated bounding box, angle, corner extraction, per-profile debug colors |
 | cornerPin.js        | Perspective transform matrix, drag + touch UI                     |
 | physicsEngine.js    | Matter.js world, static collider sync, dynamic body spawn/cleanup |
-| pluginSystem.js     | Hook-based plugin manager (register, toggle, lifecycle hooks)     |
 | stabilizer.js       | Object tracking, jitter filtering, ID assignment                  |
 | storage.js          | localStorage persistence, JSON file export/import                 |
 | utils.js            | FPS/memory HUD, general utilities                                 |
-| webglRenderer.js    | WebGL2 GPU shaders for HSV mask overlay + particle point sprites  |
 
 ---
 
@@ -147,8 +128,6 @@ export const CONFIG = {
   maxDynamicBodies: 80,         // Max particles
   autoSpawnEnabled: true,
   dynamicBodyRadius: 12,
-  useWebGL: false,              // Toggle GPU-accelerated rendering
-  enabledPlugins: ['collisionSpark', 'trailEffect'],
 };
 ```
 
@@ -187,41 +166,15 @@ export const CONFIG = {
 - Press **'D'** to toggle the debug overlay (bounding boxes, handles, angle text).
 - The **FPS/Mem HUD** (top-left) shows real FPS and OpenCV Mat count (memory leak warning if >200).
 
-### WebGL-Accelerated Rendering
-- Toggle the **⚡ WebGL accelerated rendering** checkbox in the control panel.
-- When enabled, the GPU renders the HSV color mask overlay and particles via WebGL2 shaders.
-- OpenCV contour detection still runs on CPU; only the visualization is GPU-accelerated.
-- Falls back to Canvas2D automatically if WebGL2 is unavailable.
-
-### Plugin System
-- The **🔌 Plugins** section in the control panel lists all registered plugins.
-- Toggle each plugin on/off with a checkbox. State is saved with calibration.
-- **Built-in plugins:**
-  - `collisionSpark` — draws fading spark bursts when particles collide with detected objects.
-  - `trailEffect` — draws fading motion trails behind fast-moving particles.
-- **Writing custom plugins:** create a JS file exporting `{ name, version, description, hooks: { onRender, ... } }` and register it via `pluginManager.register()`.
-- Available hooks: `onInit`, `onBeforeFrame`, `onAfterDetection`, `onAfterStabilize`, `onAfterPhysicsSync`, `onRender`, `onConfigChange`, `onDestroy`.
-
-### Running Tests
-Open `tests/index.html` in a browser (via a local HTTP server):
-
-```bash
-python3 -m http.server 8000
-# Open http://localhost:8000/tests/index.html
-```
-
-Tests cover: CONFIG, Stabilizer, Storage, PluginManager, ContourProcessor, WebGL Renderer.
-
 ---
 
 ## Performance Notes & Known Limitations
 - ⚠️ **PERF:** All OpenCV Mats are manually deleted each frame to prevent memory leaks.
 - Multi-color detection shares a single HSV conversion across profiles for efficiency.
-- WebGL mode offloads mask + particle rendering to the GPU for better frame rates.
-- Real-time performance (30+ FPS) depends on webcam resolution, CPU/GPU, and browser.
+- Real-time performance (30+ FPS) depends on webcam resolution, CPU, and browser.
+- No GPU/WebGL acceleration; all processing is CPU-bound.
 - Physics colliders are static and update only when objects move significantly.
 - Dynamic bodies are automatically cleaned up when off-screen or over the cap.
-- Plugins run inside try/catch — a bad plugin cannot crash the main loop.
 
 ---
 
@@ -232,9 +185,9 @@ Tests cover: CONFIG, Stabilizer, Storage, PluginManager, ContourProcessor, WebGL
 - [x] Touch/mobile support for UI
 - [x] Physics: dynamic bodies, more interactions
 - [x] Export/import config presets
-- [x] WebGL-accelerated pipeline
-- [x] Modular plugin system
-- [x] Automated test suite
+- [ ] WebGL-accelerated pipeline
+- [ ] Modular plugin system
+- [ ] Automated test suite
 
 ---
 
