@@ -5,7 +5,7 @@
 import { initCamera, captureFrame } from './modules/camera.js';
 import { detectColorMasks, findContours } from './modules/colorDetection.js';
 import { processContours, drawDebugOverlay } from './modules/contourProcessor.js';
-import { buildPerspectiveTransform, warpPoints, initCornerPinUI } from './modules/cornerPin.js';
+import { initCornerPinUI } from './modules/cornerPin.js';
 import { stabilizeObjects } from './modules/stabilizer.js';
 import { initPhysics, syncPhysicsBodies, spawnDynamicBody, cleanupDynamicBodies, getDynamicBodyCount } from './modules/physicsEngine.js';
 import { CONFIG } from './config.js';
@@ -20,11 +20,17 @@ const physicsCanvas = document.getElementById('physicsCanvas');
 const debugCtx = debugCanvas.getContext('2d');
 
 let showDebug = true;
-let currentTransformMat = null;
 const bodyRegistry = new Map();
 let physics = null;
 let fpsTick = null;
 let spawnTimerId = null;
+
+let cornerPinDraw = null;
+let opencvReady = false;
+let activeProfileIdx = 0;
+let cameraPreviewCanvas = null;
+let cameraPreviewCtx = null;
+let maskPreviewCanvas = null;
 
 // ═════════════════════════════════════════════
 // OpenCV ready
@@ -58,15 +64,38 @@ function waitForOpenCvReady() {
 // Init
 // ═════════════════════════════════════════════
 async function init() {
-  // Load saved calibration first
-  loadCalibration();
+  // Force clear stale calibration from older versions
+  const loaded = loadCalibration();
+  if (loaded && (CONFIG.stabilizerTolerance <= 10 || CONFIG.cornerPin[0].x > 0)) {
+    console.warn('[init] Clearing stale calibration (old cornerPin or tolerance).');
+    clearCalibration();
+    location.reload();
+    return;
+  }
 
-  await waitForOpenCvReady();
+  // 1. Init camera FIRST — no OpenCV needed, user sees feed immediately
   await initCamera(video);
+
+  // 2. Init physics — no OpenCV needed
   physics = initPhysics(physicsCanvas);
 
   // Force transparent background on physicsCanvas (in case Matter.js overrides it)
   physicsCanvas.style.background = 'transparent';
+
+  // Draw camera feed behind physics bodies after each Matter.js render frame
+  Matter.Events.on(physics.render, 'afterRender', () => {
+    const ctx = physicsCanvas.getContext('2d');
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-over';
+    if (CONFIG.showCameraFeed && video.readyState >= 2) {
+      ctx.drawImage(video, 0, 0, physicsCanvas.width, physicsCanvas.height);
+    } else if (!CONFIG.showCameraFeed) {
+      // Projection mode: solid black background (no camera feed)
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, physicsCanvas.width, physicsCanvas.height);
+    }
+    ctx.restore();
+  });
 
   // Canvas internal resolution
   [captureCanvas, debugCanvas, physicsCanvas].forEach(c => {
@@ -89,50 +118,67 @@ async function init() {
   // FPS HUD
   fpsTick = createFPSMonitor(document.body);
 
-  // Perspective transform
-  const canvasCorners = [
-    { x: 0, y: 0 },
-    { x: CONFIG.canvasWidth, y: 0 },
-    { x: CONFIG.canvasWidth, y: CONFIG.canvasHeight },
-    { x: 0, y: CONFIG.canvasHeight }
-  ];
-  currentTransformMat = buildPerspectiveTransform(CONFIG.cornerPin, canvasCorners);
-
-  initCornerPinUI(debugCanvas, newCorners => {
-    if (currentTransformMat) currentTransformMat.delete();
-    currentTransformMat = buildPerspectiveTransform(newCorners, canvasCorners);
-    CONFIG.cornerPin = newCorners.map(p => ({ ...p }));
-    debouncedSave();
-  });
-
-  // Debug toggle (D key)
+  // Debug toggle (D key) — toggles corner pin handles
   window.addEventListener('keydown', e => {
     if (e.key === 'd' || e.key === 'D') {
       showDebug = !showDebug;
-      debugCanvas.style.display = showDebug ? 'block' : 'none';
+    }
+    // T = spawn a test static body in the middle (to verify physics works)
+    if (e.key === 't' || e.key === 'T') {
+      const testBody = Matter.Bodies.rectangle(
+        CONFIG.canvasWidth / 2,
+        CONFIG.canvasHeight * 0.6,
+        300,
+        20,
+        {
+          isStatic: true,
+          angle: 0.15,
+          restitution: 0.6,
+          friction: 0.4,
+          render: { fillStyle: 'rgba(255,255,0,0.5)', strokeStyle: '#ff0', lineWidth: 2 }
+        }
+      );
+      Matter.World.add(physics.world, testBody);
+      console.log('[test] Added test static body at center — press T again for more');
     }
   });
-  debugCanvas.style.display = showDebug ? 'block' : 'none';
 
-  // Click / tap to spawn dynamic body
-  physicsCanvas.style.pointerEvents = 'auto';
+  // Click / tap to spawn dynamic body (on debugCanvas since it's the topmost layer)
   function spawnAtPointer(px, py) {
-    const rect = physicsCanvas.getBoundingClientRect();
+    const rect = debugCanvas.getBoundingClientRect();
     const scaleX = CONFIG.canvasWidth / rect.width;
     const scaleY = CONFIG.canvasHeight / rect.height;
     spawnDynamicBody(physics.world, (px - rect.left) * scaleX, (py - rect.top) * scaleY);
   }
-  physicsCanvas.addEventListener('click', e => spawnAtPointer(e.clientX, e.clientY));
-  physicsCanvas.addEventListener('touchstart', e => {
-    e.preventDefault();
-    const t = e.touches[0];
-    spawnAtPointer(t.clientX, t.clientY);
-  }, { passive: false });
+  debugCanvas.addEventListener('click', e => spawnAtPointer(e.clientX, e.clientY));
 
   // Auto-spawn timer
   startAutoSpawn();
 
+  // Start render loop NOW (camera + physics work without OpenCV)
   requestAnimationFrame(mainLoop);
+
+  // 3. Wait for OpenCV in the background
+  try {
+    await waitForOpenCvReady();
+  } catch (err) {
+    console.error('OpenCV.js failed to load:', err);
+    const errDiv = document.getElementById('cameraError');
+    if (errDiv) {
+      errDiv.textContent = 'OpenCV.js failed to load — color detection is disabled. Refresh to retry.';
+      errDiv.style.display = 'block';
+    }
+    return; // keep running without detection
+  }
+
+  // 4. OpenCV-dependent setup: corner pin UI (for future projection mapping)
+  cornerPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+    CONFIG.cornerPin = newCorners.map(p => ({ ...p }));
+    debouncedSave();
+  });
+
+  opencvReady = true;
+  console.log('[init] OpenCV ready — detection pipeline active');
 }
 
 // ── Auto-spawn ──
@@ -157,6 +203,20 @@ let cleanupCounter = 0;
 function mainLoop() {
   if (fpsTick) fpsTick();
 
+  // Update camera preview (always, even without OpenCV)
+  if (cameraPreviewCtx && video.readyState >= 2) {
+    cameraPreviewCtx.drawImage(video, 0, 0, cameraPreviewCanvas.width, cameraPreviewCanvas.height);
+  }
+
+  // Skip detection if video or OpenCV isn't ready yet
+  if (!opencvReady || !video.videoWidth || !video.videoHeight || video.readyState < 2) {
+    // Still draw debug overlay (corner pin handles)
+    debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+    if (showDebug && cornerPinDraw) cornerPinDraw();
+    requestAnimationFrame(mainLoop);
+    return;
+  }
+
   // 1. Capture frame
   captureFrame(video, captureCanvas, captureCanvas.getContext('2d'));
 
@@ -167,31 +227,49 @@ function mainLoop() {
     // 2. Detect masks for all color profiles
     const masksInfo = detectColorMasks(src, CONFIG.colorProfiles);
 
-    // 3. Process each mask
+    // Update mask preview for the active profile
+    if (maskPreviewCanvas && masksInfo.length > 0) {
+      const activeMaskInfo = masksInfo.find(m => m.profileIndex === activeProfileIdx);
+      if (activeMaskInfo) {
+        try {
+          const dsize = new cv.Size(maskPreviewCanvas.width, maskPreviewCanvas.height);
+          const resized = new cv.Mat();
+          cv.resize(activeMaskInfo.mask, resized, dsize);
+          cv.imshow(maskPreviewCanvas, resized);
+          resized.delete();
+        } catch (_) { /* ignore preview errors */ }
+      }
+    }
+
+    // 3. Process each mask — isolated per profile so one failure doesn't kill all
     let allDetections = [];
     for (const { profileIndex, mask } of masksInfo) {
-      const profile = CONFIG.colorProfiles[profileIndex];
-      const contoursVec = findContours(mask);
-      const contours = [];
-      for (let i = 0; i < contoursVec.size(); ++i) contours.push(contoursVec.get(i));
-      const detected = processContours(contours);
+      try {
+        const profile = CONFIG.colorProfiles[profileIndex];
+        const contoursVec = findContours(mask);
+        const contours = [];
+        for (let i = 0; i < contoursVec.size(); ++i) contours.push(contoursVec.get(i));
+        const detected = processContours(contours);
 
-      // 4. Warp + tag with profile info
-      for (const obj of detected) {
-        const warpedCorners = warpPoints(obj.corners, currentTransformMat);
-        allDetections.push({
-          ...obj,
-          corners: warpedCorners,
-          profileIndex,
-          profileName: profile.name,
-          displayColor: profile.displayColor
-        });
+        // 4. Tag with profile info — coordinates are already in canvas space
+        for (const obj of detected) {
+          allDetections.push({
+            ...obj,
+            profileIndex,
+            profileName: profile.name,
+            displayColor: profile.displayColor
+          });
+        }
+
+        // Cleanup OpenCV mats
+        contours.forEach(c => c.delete());
+        contoursVec.delete();
+      } catch (profileErr) {
+        // Isolate per-profile errors — log but continue to next profile
+        console.warn(`[mainLoop] Detection error for profile ${profileIndex}:`, profileErr);
+      } finally {
+        mask.delete();
       }
-
-      // Cleanup OpenCV mats
-      mask.delete();
-      contoursVec.delete();
-      contours.forEach(c => c.delete());
     }
 
     // 5. Stabilize
@@ -212,12 +290,13 @@ function mainLoop() {
       }
     }
 
-    // 6. Sync physics
+    // 6. Sync physics — create/update static bodies from stabilized post-its
     syncPhysicsBodies(physics.world, stabilized, bodyRegistry);
 
-    // 7. Debug overlay
+    // 7. Debug overlay — always show detection rectangles; corner pin handles on D toggle
     debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-    if (showDebug) drawDebugOverlay(debugCtx, stabilized);
+    drawDebugOverlay(debugCtx, stabilized, bodyRegistry.size);
+    if (showDebug && cornerPinDraw) cornerPinDraw();
 
     // 8. Periodic cleanup of dynamic bodies
     if (++cleanupCounter % 60 === 0) {
@@ -226,7 +305,12 @@ function mainLoop() {
 
     src.delete();
   } catch (err) {
-    console.error('Main loop error:', err);
+    // Decode OpenCV.js C++ exception pointers into readable messages
+    let msg = err;
+    if (typeof err === 'number' && typeof cv !== 'undefined' && cv.exceptionFromPtr) {
+      try { msg = cv.exceptionFromPtr(err).msg; } catch (_) { msg = 'OpenCV error (code ' + err + ')'; }
+    }
+    console.error('Main loop error:', msg);
     if (src) try { src.delete(); } catch (_) {}
   }
 
@@ -267,6 +351,77 @@ function buildCalibrationUI() {
   title.style.cssText = 'font-weight:bold;font-size:15px;margin-bottom:10px;text-align:center;';
   panel.appendChild(title);
 
+  // ── Camera & Detection Preview ──
+  const previewSection = document.createElement('div');
+  previewSection.style.cssText = 'margin-bottom:10px;';
+
+  const previewTitle = document.createElement('div');
+  previewTitle.textContent = '📷 Camera & Detection';
+  previewTitle.style.cssText = 'font-weight:bold;margin-bottom:6px;font-size:13px;';
+  previewSection.appendChild(previewTitle);
+
+  // Camera status indicator
+  const cameraStatusEl = document.createElement('div');
+  cameraStatusEl.style.cssText = 'font-size:11px;margin-bottom:4px;';
+  function updateCameraStatus() {
+    if (video.srcObject && video.readyState >= 2) {
+      cameraStatusEl.innerHTML = '<span style="color:#6f6">● Camera active</span>' +
+        (opencvReady ? ' <span style="color:#6cf">● Detection ON</span>' : ' <span style="color:#fa0">● Loading OpenCV…</span>');
+    } else {
+      cameraStatusEl.innerHTML = '<span style="color:#f66">● Camera not available</span>';
+    }
+  }
+  updateCameraStatus();
+  setInterval(updateCameraStatus, 1000);
+  previewSection.appendChild(cameraStatusEl);
+
+  // Preview canvases container
+  const previewContainer = document.createElement('div');
+  previewContainer.style.cssText = 'display:flex;gap:4px;margin-bottom:2px;';
+
+  // Camera preview canvas
+  const camPrev = document.createElement('canvas');
+  camPrev.width = 160; camPrev.height = 90;
+  camPrev.style.cssText = 'border:1px solid #444;border-radius:4px;background:#000;';
+  cameraPreviewCanvas = camPrev;
+  cameraPreviewCtx = camPrev.getContext('2d');
+  previewContainer.appendChild(camPrev);
+
+  // Mask preview canvas
+  const maskPrev = document.createElement('canvas');
+  maskPrev.width = 160; maskPrev.height = 90;
+  maskPrev.style.cssText = 'border:1px solid #444;border-radius:4px;background:#000;';
+  maskPreviewCanvas = maskPrev;
+  previewContainer.appendChild(maskPrev);
+
+  previewSection.appendChild(previewContainer);
+
+  // Preview labels
+  const labelRow = document.createElement('div');
+  labelRow.style.cssText = 'display:flex;gap:4px;font-size:10px;color:#888;margin-bottom:6px;';
+  const camLbl = document.createElement('span'); camLbl.textContent = 'Camera Feed'; camLbl.style.width = '160px';
+  const maskLbl = document.createElement('span'); maskLbl.textContent = 'Detection Mask (active profile)';
+  labelRow.appendChild(camLbl); labelRow.appendChild(maskLbl);
+  previewSection.appendChild(labelRow);
+
+  // Show camera feed toggle (for projection mode)
+  const feedRow = document.createElement('div');
+  feedRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+  const feedCheck = document.createElement('input');
+  feedCheck.type = 'checkbox'; feedCheck.checked = CONFIG.showCameraFeed;
+  feedCheck.onchange = () => { CONFIG.showCameraFeed = feedCheck.checked; debouncedSave(); };
+  feedRow.appendChild(feedCheck);
+  const feedLbl = document.createElement('span');
+  feedLbl.textContent = 'Show camera feed (uncheck for projection)';
+  feedLbl.style.fontSize = '11px';
+  feedRow.appendChild(feedLbl);
+  previewSection.appendChild(feedRow);
+
+  panel.appendChild(previewSection);
+
+  // ── Separator ──
+  panel.appendChild(Object.assign(document.createElement('hr'), { style: { border: '0', borderTop: '1px solid #444', margin: '10px 0' } }));
+
   // ── Color profiles tabs ──
   const tabBar = document.createElement('div');
   tabBar.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;align-items:center;';
@@ -275,7 +430,7 @@ function buildCalibrationUI() {
   const profileContainer = document.createElement('div');
   panel.appendChild(profileContainer);
 
-  let activeTab = 0;
+  let activeTab = activeProfileIdx;
 
   function renderTabs() {
     tabBar.innerHTML = '';
@@ -284,7 +439,7 @@ function buildCalibrationUI() {
       btn.textContent = p.name;
       btn.style.cssText = `padding:4px 10px;border:2px solid ${p.displayColor};border-radius:6px;cursor:pointer;
         font:12px monospace;color:#fff;background:${i === activeTab ? p.displayColor + '44' : 'transparent'};`;
-      btn.onclick = () => { activeTab = i; renderTabs(); renderProfileSliders(i); };
+      btn.onclick = () => { activeTab = i; activeProfileIdx = i; renderTabs(); renderProfileSliders(i); };
       tabBar.appendChild(btn);
     });
     // Add profile button
@@ -302,6 +457,7 @@ function buildCalibrationUI() {
         displayColor: colors[idx]
       });
       activeTab = CONFIG.colorProfiles.length - 1;
+      activeProfileIdx = activeTab;
       renderTabs();
       renderProfileSliders(activeTab);
       debouncedSave();
@@ -338,6 +494,7 @@ function buildCalibrationUI() {
       rmBtn.onclick = () => {
         CONFIG.colorProfiles.splice(idx, 1);
         activeTab = Math.min(activeTab, CONFIG.colorProfiles.length - 1);
+        activeProfileIdx = activeTab;
         renderTabs(); renderProfileSliders(activeTab); debouncedSave();
       };
       nameRow.appendChild(rmBtn);
@@ -414,6 +571,27 @@ function buildCalibrationUI() {
   // Radius slider
   addSliderRow(panel, 'Radius', CONFIG.dynamicBodyRadius, 4, 40, 1, v => {
     CONFIG.dynamicBodyRadius = v; debouncedSave();
+  });
+
+  // ── Separator ──
+  panel.appendChild(Object.assign(document.createElement('hr'), { style: { border: '0', borderTop: '1px solid #444', margin: '10px 0' } }));
+
+  // ── Detection tuning controls ──
+  const detTitle = document.createElement('div');
+  detTitle.textContent = '🔍 Detection';
+  detTitle.style.cssText = 'font-weight:bold;margin-bottom:6px;';
+  panel.appendChild(detTitle);
+
+  addSliderRow(panel, 'Min area', CONFIG.minContourArea, 50, 3000, 50, v => {
+    CONFIG.minContourArea = v; debouncedSave();
+  });
+
+  addSliderRow(panel, 'Match tol.', CONFIG.stabilizerTolerance, 10, 200, 5, v => {
+    CONFIG.stabilizerTolerance = v; debouncedSave();
+  });
+
+  addSliderRow(panel, 'Persist (f)', CONFIG.stabilizerFreezeFrames, 5, 120, 5, v => {
+    CONFIG.stabilizerFreezeFrames = v; debouncedSave();
   });
 
   // ── Separator ──

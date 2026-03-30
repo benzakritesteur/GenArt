@@ -8,6 +8,22 @@ import { CONFIG } from '../config.js';
 const dynamicBodies = new Set();
 
 /**
+ * Converts a hex color (3 or 6 char) to rgba string.
+ *
+ * @param {string} hex - Hex color string (e.g. '#ff0' or '#ffcc00').
+ * @param {number} alpha - Alpha value 0-1.
+ * @returns {string} CSS rgba() string.
+ */
+function hexToRgba(hex, alpha) {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/**
  * Initializes the Matter.js physics engine, world, and renderer.
  *
  * @param {HTMLCanvasElement} renderCanvas
@@ -17,7 +33,7 @@ export function initPhysics(renderCanvas) {
   const engine = Matter.Engine.create();
   const world = engine.world;
   engine.gravity.x = 0;
-  engine.gravity.y = 1;
+  engine.gravity.y = 1.2;
 
   const render = Matter.Render.create({
     canvas: renderCanvas,
@@ -25,6 +41,7 @@ export function initPhysics(renderCanvas) {
     options: {
       width: CONFIG.canvasWidth,
       height: CONFIG.canvasHeight,
+      pixelRatio: 1,
       wireframes: false,
       background: 'transparent',
       hasBounds: true,
@@ -69,8 +86,10 @@ export function spawnDynamicBody(world, x, y) {
   const color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
   const body = Matter.Bodies.circle(x, y, r, {
     isStatic: false,
-    restitution: 0.6,
-    friction: 0.3,
+    restitution: 0.75,
+    friction: 0.1,
+    frictionAir: 0.005,
+    density: 0.002,
     render: { fillStyle: color }
   });
   Matter.World.add(world, body);
@@ -104,6 +123,8 @@ export function getDynamicBodyCount() { return dynamicBodies.size; }
 
 /**
  * Synchronizes Matter.js static bodies with stabilized detected objects.
+ * Uses Matter.Bodies.rectangle with rotation — much more reliable than
+ * fromVertices (which requires poly-decomp for concave polygons).
  *
  * @param {Matter.World} world
  * @param {Array<{center: {x: number, y: number}, size: {width: number, height: number}, angle: number, corners: Array<{x: number, y: number}>, id?: number}>} stabilizedObjects
@@ -122,32 +143,64 @@ export function syncPhysicsBodies(world, stabilizedObjects, bodyRegistry) {
     const id = obj.id;
     if (typeof id !== 'number') continue;
     currentIds.add(id);
+
+    // Use width/height from the detected rotated rectangle
+    const w = obj.size.width;
+    const h = obj.size.height;
+    if (w < 1 || h < 1) continue;
+
+    // OpenCV minAreaRect angle → radians for Matter.js
+    // OpenCV 4.x returns angle in [-90, 0) — we convert to standard radians
+    const angleRad = obj.angle * Math.PI / 180;
+
     let body = bodyRegistry.get(id);
-    const vertices = obj.corners.map(pt => ({ x: pt.x, y: pt.y }));
     if (!body) {
-      body = Matter.Bodies.fromVertices(
+      // Create a static rectangle at the detected center with rotation
+      const color = obj.displayColor || '#00ff00';
+      body = Matter.Bodies.rectangle(
         obj.center.x,
         obj.center.y,
-        [vertices],
-        { isStatic: true, render: { fillStyle: 'rgba(0,255,0,0.2)' } },
-        true
+        w,
+        h,
+        {
+          isStatic: true,
+          angle: angleRad,
+          restitution: 0.6,
+          friction: 0.4,
+          render: {
+            fillStyle: hexToRgba(color, 0.35),
+            strokeStyle: hexToRgba(color, 1),
+            lineWidth: 3,
+            visible: true
+          }
+        }
       );
+
+      if (!body) {
+        console.warn(`[physics] Failed to create body for object #${id}`);
+        continue;
+      }
+
       Matter.World.add(world, body);
       bodyRegistry.set(id, body);
+      console.log(`[physics] Created static body #${id} at (${obj.center.x.toFixed(0)}, ${obj.center.y.toFixed(0)}) size ${w.toFixed(0)}×${h.toFixed(0)}`);
     } else {
+      // Update existing body position/angle if moved significantly
       const d = dist(obj.center, body.position);
-      const angleDelta = Math.abs(obj.angle - body.angle * 180 / Math.PI);
-      if (d > CONFIG.stabilizerTolerance || angleDelta > 5) {
+      const angleDelta = Math.abs(angleRad - body.angle);
+      if (d > 3 || angleDelta > 0.03) {
         Matter.Body.setPosition(body, obj.center);
-        Matter.Body.setAngle(body, obj.angle * Math.PI / 180);
+        Matter.Body.setAngle(body, angleRad);
       }
     }
   }
 
+  // Remove bodies whose tracked objects have disappeared
   for (const [id, body] of bodyRegistry.entries()) {
     if (!currentIds.has(id)) {
       Matter.World.remove(world, body);
       bodyRegistry.delete(id);
+      console.log(`[physics] Removed static body #${id}`);
     }
   }
 }

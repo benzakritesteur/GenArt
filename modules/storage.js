@@ -23,6 +23,7 @@ function snapshot() {
     maxDynamicBodies: CONFIG.maxDynamicBodies,
     autoSpawnEnabled: CONFIG.autoSpawnEnabled,
     dynamicBodyRadius: CONFIG.dynamicBodyRadius,
+    showCameraFeed: CONFIG.showCameraFeed,
   };
 }
 
@@ -38,7 +39,8 @@ function mergeIntoConfig(data) {
   const scalars = [
     'minContourArea', 'stabilizerTolerance', 'stabilizerFreezeFrames',
     'canvasWidth', 'canvasHeight',
-    'spawnInterval', 'maxDynamicBodies', 'autoSpawnEnabled', 'dynamicBodyRadius'
+    'spawnInterval', 'maxDynamicBodies', 'autoSpawnEnabled', 'dynamicBodyRadius',
+    'showCameraFeed'
   ];
   for (const key of scalars) {
     if (data[key] !== undefined) CONFIG[key] = data[key];

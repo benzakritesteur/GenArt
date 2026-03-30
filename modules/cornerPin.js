@@ -63,7 +63,7 @@ export function warpPoints(points, transformMat) {
  *
  * @param {HTMLCanvasElement} overlayCanvas - Canvas for drawing and interaction.
  * @param {(points: Array<{x: number, y: number}>) => void} onUpdate - Callback called with new corner points after drag.
- * @returns {void}
+ * @returns {function(): void} draw - Call this each frame to redraw the corner pin handles.
  * @example
  * initCornerPinUI(canvas, (pts) => { ... });
  */
@@ -76,16 +76,18 @@ export function initCornerPinUI(overlayCanvas, onUpdate) {
   const HIT_RADIUS = 15;
 
   function draw() {
-    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    // NOTE: Do NOT clearRect here — the main loop clears the debug canvas before redrawing.
     // Draw quad lines
     ctx.save();
-    ctx.strokeStyle = '#222';
+    ctx.strokeStyle = '#ff0';
     ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
     for (let i = 1; i < 4; ++i) ctx.lineTo(points[i].x, points[i].y);
     ctx.closePath();
     ctx.stroke();
+    ctx.setLineDash([]);
     // Draw handles
     for (let i = 0; i < 4; ++i) {
       ctx.beginPath();
@@ -108,10 +110,18 @@ export function initCornerPinUI(overlayCanvas, onUpdate) {
     return null;
   }
 
-  function onMouseDown(e) {
+  function canvasCoords(clientX, clientY) {
     const rect = overlayCanvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const scaleX = overlayCanvas.width / rect.width;
+    const scaleY = overlayCanvas.height / rect.height;
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY
+    };
+  }
+
+  function onMouseDown(e) {
+    const { x, y } = canvasCoords(e.clientX, e.clientY);
     const idx = getHandleAt(x, y);
     if (idx !== null) {
       draggingIdx = idx;
@@ -122,9 +132,7 @@ export function initCornerPinUI(overlayCanvas, onUpdate) {
   }
 
   function onMouseMove(e) {
-    const rect = overlayCanvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const { x, y } = canvasCoords(e.clientX, e.clientY);
     if (draggingIdx !== null) {
       points[draggingIdx].x = Math.max(0, Math.min(overlayCanvas.width, x + dragOffset.x));
       points[draggingIdx].y = Math.max(0, Math.min(overlayCanvas.height, y + dragOffset.y));
@@ -146,13 +154,12 @@ export function initCornerPinUI(overlayCanvas, onUpdate) {
   window.addEventListener('mouseup', onMouseUp);
 
   // ── Touch support ──
-  function getTouchPos(e) {
+  function getTouchCanvasCoords(e) {
     const t = e.touches[0] || e.changedTouches[0];
-    const rect = overlayCanvas.getBoundingClientRect();
-    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+    return canvasCoords(t.clientX, t.clientY);
   }
   overlayCanvas.addEventListener('touchstart', e => {
-    const { x, y } = getTouchPos(e);
+    const { x, y } = getTouchCanvasCoords(e);
     const idx = getHandleAt(x, y);
     if (idx !== null) {
       e.preventDefault();
@@ -164,7 +171,7 @@ export function initCornerPinUI(overlayCanvas, onUpdate) {
   overlayCanvas.addEventListener('touchmove', e => {
     if (draggingIdx !== null) {
       e.preventDefault();
-      const { x, y } = getTouchPos(e);
+      const { x, y } = getTouchCanvasCoords(e);
       points[draggingIdx].x = Math.max(0, Math.min(overlayCanvas.width, x + dragOffset.x));
       points[draggingIdx].y = Math.max(0, Math.min(overlayCanvas.height, y + dragOffset.y));
       draw();
@@ -176,5 +183,8 @@ export function initCornerPinUI(overlayCanvas, onUpdate) {
   });
 
   draw();
+
+  // Return the draw function so the main loop can redraw handles each frame
+  return draw;
 }
 

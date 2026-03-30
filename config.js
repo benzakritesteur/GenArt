@@ -25,11 +25,32 @@ export const CONFIG = {
   /** @type {ColorProfile[]} */
   colorProfiles: [
     {
-      name: 'Green',
-      hueMin: 30, hueMax: 90,
-      satMin: 80, satMax: 255,
+      name: 'Yellow',
+      hueMin: 15, hueMax: 45,
+      satMin: 60, satMax: 255,
+      valMin: 100, valMax: 255,
+      displayColor: '#ff0'
+    },
+    {
+      name: 'Pink',
+      hueMin: 140, hueMax: 175,
+      satMin: 40, satMax: 255,
+      valMin: 100, valMax: 255,
+      displayColor: '#f6c'
+    },
+    {
+      name: 'Blue',
+      hueMin: 90, hueMax: 130,
+      satMin: 60, satMax: 255,
       valMin: 80, valMax: 255,
-      displayColor: '#0f0'
+      displayColor: '#39f'
+    },
+    {
+      name: 'Green',
+      hueMin: 45, hueMax: 85,
+      satMin: 50, satMax: 255,
+      valMin: 80, valMax: 255,
+      displayColor: '#3c6'
     }
   ],
 
@@ -48,11 +69,11 @@ export const CONFIG = {
   set valMax(v) { this.colorProfiles[0].valMax = v; },
 
   // ── Contour ──
-  /** @type {number} */ minContourArea: 500,
+  /** @type {number} */ minContourArea: 300,
 
   // ── Stabilizer ──
-  /** @type {number} */ stabilizerTolerance: 8,
-  /** @type {number} */ stabilizerFreezeFrames: 10,
+  /** @type {number} */ stabilizerTolerance: 60,
+  /** @type {number} */ stabilizerFreezeFrames: 30,
 
   // ── Canvas ──
   /** @type {number} */ canvasWidth: 1280,
@@ -61,10 +82,10 @@ export const CONFIG = {
   // ── Corner pin ──
   /** @type {Point[]} */
   cornerPin: [
-    { x: 100, y: 100 },
-    { x: 1180, y: 100 },
-    { x: 1180, y: 620 },
-    { x: 100, y: 620 }
+    { x: 0, y: 0 },
+    { x: 1280, y: 0 },
+    { x: 1280, y: 720 },
+    { x: 0, y: 720 }
   ],
 
   // ── Physics: dynamic bodies ──
@@ -72,4 +93,7 @@ export const CONFIG = {
   /** @type {number} */ maxDynamicBodies: 80,
   /** @type {boolean} */ autoSpawnEnabled: true,
   /** @type {number} */ dynamicBodyRadius: 12,
+
+  // ── Display ──
+  /** @type {boolean} */ showCameraFeed: true,
 };
