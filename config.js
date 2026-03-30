@@ -7,66 +7,25 @@
 /**
  * @typedef {Object} ColorProfile
  * @property {string} name - Display name
- * @property {number} hueMin
- * @property {number} hueMax
- * @property {number} satMin
- * @property {number} satMax
- * @property {number} valMin
- * @property {number} valMax
- * @property {string} displayColor - CSS color for debug overlay
+ * @property {string} targetColor - Target color in hex (e.g. '#FFD700')
+ * @property {number} tolerance - Max per-channel color difference (0-255)
  */
 
 /**
  * Global configuration object for GenArt real-time projection mapping system.
+ * Color detection uses RGB color difference: a pixel is detected when each
+ * channel's absolute difference from the target color is within the tolerance.
  * @namespace
  */
 export const CONFIG = {
-  // ── Multi-color detection profiles ──
+  // ── Multi-color detection profiles (RGB difference) ──
   /** @type {ColorProfile[]} */
   colorProfiles: [
-    {
-      name: 'Yellow',
-      hueMin: 15, hueMax: 45,
-      satMin: 60, satMax: 255,
-      valMin: 100, valMax: 255,
-      displayColor: '#ff0'
-    },
-    {
-      name: 'Pink',
-      hueMin: 140, hueMax: 175,
-      satMin: 40, satMax: 255,
-      valMin: 100, valMax: 255,
-      displayColor: '#f6c'
-    },
-    {
-      name: 'Blue',
-      hueMin: 90, hueMax: 130,
-      satMin: 60, satMax: 255,
-      valMin: 80, valMax: 255,
-      displayColor: '#39f'
-    },
-    {
-      name: 'Green',
-      hueMin: 45, hueMax: 85,
-      satMin: 50, satMax: 255,
-      valMin: 80, valMax: 255,
-      displayColor: '#3c6'
-    }
+    { name: 'Yellow', targetColor: '#E2C829', tolerance: 55 },
+    { name: 'Pink',   targetColor: '#E8509A', tolerance: 55 },
+    { name: 'Blue',   targetColor: '#3B7DD8', tolerance: 55 },
+    { name: 'Green',  targetColor: '#3BB54A', tolerance: 55 },
   ],
-
-  // ── Legacy accessors (point to first profile) ──
-  get hueMin()  { return this.colorProfiles[0].hueMin; },
-  set hueMin(v) { this.colorProfiles[0].hueMin = v; },
-  get hueMax()  { return this.colorProfiles[0].hueMax; },
-  set hueMax(v) { this.colorProfiles[0].hueMax = v; },
-  get satMin()  { return this.colorProfiles[0].satMin; },
-  set satMin(v) { this.colorProfiles[0].satMin = v; },
-  get satMax()  { return this.colorProfiles[0].satMax; },
-  set satMax(v) { this.colorProfiles[0].satMax = v; },
-  get valMin()  { return this.colorProfiles[0].valMin; },
-  set valMin(v) { this.colorProfiles[0].valMin = v; },
-  get valMax()  { return this.colorProfiles[0].valMax; },
-  set valMax(v) { this.colorProfiles[0].valMax = v; },
 
   // ── Contour ──
   /** @type {number} */ minContourArea: 300,
@@ -96,4 +55,5 @@ export const CONFIG = {
 
   // ── Display ──
   /** @type {boolean} */ showCameraFeed: true,
+  /** @type {boolean} */ showSurfaces: true,
 };

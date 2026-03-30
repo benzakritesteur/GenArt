@@ -24,6 +24,7 @@ function snapshot() {
     autoSpawnEnabled: CONFIG.autoSpawnEnabled,
     dynamicBodyRadius: CONFIG.dynamicBodyRadius,
     showCameraFeed: CONFIG.showCameraFeed,
+    showSurfaces: CONFIG.showSurfaces,
   };
 }
 
@@ -34,13 +35,18 @@ function snapshot() {
 function mergeIntoConfig(data) {
   if (!data) return;
   if (Array.isArray(data.colorProfiles) && data.colorProfiles.length > 0) {
-    CONFIG.colorProfiles = data.colorProfiles.map(p => ({ ...p }));
+    // Only merge profiles that use the new targetColor+tolerance format;
+    // discard stale HSV-based profiles from older versions.
+    const isNewFormat = data.colorProfiles.every(p => typeof p.targetColor === 'string');
+    if (isNewFormat) {
+      CONFIG.colorProfiles = data.colorProfiles.map(p => ({ ...p }));
+    }
   }
   const scalars = [
     'minContourArea', 'stabilizerTolerance', 'stabilizerFreezeFrames',
     'canvasWidth', 'canvasHeight',
     'spawnInterval', 'maxDynamicBodies', 'autoSpawnEnabled', 'dynamicBodyRadius',
-    'showCameraFeed'
+    'showCameraFeed', 'showSurfaces'
   ];
   for (const key of scalars) {
     if (data[key] !== undefined) CONFIG[key] = data[key];

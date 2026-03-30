@@ -93,12 +93,12 @@ export function drawDebugOverlay(ctx, detectedObjects, bodyCount = 0) {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillStyle = detectedObjects.length > 0 ? '#6f6' : '#f66';
-  ctx.fillText(`Detected: ${detectedObjects.length}`, 14, 14);
+  ctx.fillText(`Surfaces: ${detectedObjects.length}`, 14, 14);
   ctx.fillStyle = bodyCount > 0 ? '#6cf' : '#fa0';
-  ctx.fillText(`Bodies: ${bodyCount}`, 150, 14);
+  ctx.fillText(`Balls: ${bodyCount}`, 150, 14);
   ctx.fillStyle = '#888';
   ctx.font = '11px monospace';
-  ctx.fillText(detectedObjects.length === 0 ? 'Tune HSV sliders until mask shows post-its' : 'Post-its detected ✓', 14, 32);
+  ctx.fillText(detectedObjects.length === 0 ? 'Pick target color & adjust tolerance' : 'Surfaces detected ✓ — balls bounce on them', 14, 32);
 
   ctx.lineWidth = 2;
   for (const obj of detectedObjects) {

@@ -155,8 +155,9 @@ export function syncPhysicsBodies(world, stabilizedObjects, bodyRegistry) {
 
     let body = bodyRegistry.get(id);
     if (!body) {
-      // Create a static rectangle at the detected center with rotation
-      const color = obj.displayColor || '#00ff00';
+      // Create a static rectangle at the detected center with rotation.
+      // Rendered invisible here — surfaces are drawn explicitly in the
+      // afterRender callback for better visual feedback.
       body = Matter.Bodies.rectangle(
         obj.center.x,
         obj.center.y,
@@ -167,12 +168,7 @@ export function syncPhysicsBodies(world, stabilizedObjects, bodyRegistry) {
           angle: angleRad,
           restitution: 0.6,
           friction: 0.4,
-          render: {
-            fillStyle: hexToRgba(color, 0.35),
-            strokeStyle: hexToRgba(color, 1),
-            lineWidth: 3,
-            visible: true
-          }
+          render: { visible: false }
         }
       );
 

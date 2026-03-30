@@ -1,45 +1,62 @@
 /**
  * Color detection and contour finding utilities using OpenCV.js.
- * Supports multi-color detection via profile parameter.
+ * Uses RGB color difference approach: a pixel is detected when each channel's
+ * absolute difference from the target color is within the tolerance.
  *
- * Pipeline: Gaussian blur → HSV conversion → inRange thresholding →
- *           morphology (open + close) → contour finding + shape filtering.
+ * Pipeline: Gaussian blur → BGR conversion → per-profile inRange (BGR ± tolerance)
+ *           → morphology (open + close) → contour finding + area filtering.
  */
 import { CONFIG } from '../config.js';
 
 /**
- * Detects a color mask for a single HSV profile.
+ * Converts a hex color string to RGB values.
  *
- * Applies Gaussian blur to reduce camera noise before HSV thresholding,
- * then cleans the mask with morphological open/close operations.
+ * @param {string} hex - Hex color string (e.g. '#ff0' or '#ffcc00').
+ * @returns {{r: number, g: number, b: number}} RGB values (0-255).
+ */
+export function hexToRgb(hex) {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  return {
+    r: parseInt(h.substring(0, 2), 16),
+    g: parseInt(h.substring(2, 4), 16),
+    b: parseInt(h.substring(4, 6), 16),
+  };
+}
+
+/**
+ * Detects a color mask for a single color profile using RGB color difference.
+ * A pixel is detected if each BGR channel's absolute difference from the target
+ * color is within the tolerance.
  *
  * @param {cv.Mat} src - Source image Mat in RGBA format.
- * @param {{hueMin:number,hueMax:number,satMin:number,satMax:number,valMin:number,valMax:number}} [profile] - HSV profile (defaults to first colorProfile).
+ * @param {{targetColor: string, tolerance: number}} profile - Color profile.
  * @returns {cv.Mat} Binary mask Mat (single channel, 0/255).
  */
 export function detectColorMask(src, profile) {
-  const p = profile || CONFIG.colorProfiles[0];
-  let bgr = null, blurred = null, hsv = null, mask = null;
+  const { r, g, b } = hexToRgb(profile.targetColor);
+  const tol = profile.tolerance;
+
+  let bgr = null, blurred = null, mask = null;
   let kernelSmall = null, kernelLarge = null, opened = null, closed = null;
   try {
     bgr = new cv.Mat();
     cv.cvtColor(src, bgr, cv.COLOR_RGBA2BGR);
 
-    // Gaussian blur to suppress camera noise before HSV conversion
     blurred = new cv.Mat();
     cv.GaussianBlur(bgr, blurred, new cv.Size(7, 7), 0);
 
-    hsv = new cv.Mat();
-    cv.cvtColor(blurred, hsv, cv.COLOR_BGR2HSV);
-
-    const low = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [p.hueMin, p.satMin, p.valMin, 0]);
-    const high = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [p.hueMax, p.satMax, p.valMax, 255]);
+    const low = new cv.Mat(blurred.rows, blurred.cols, blurred.type(), [
+      Math.max(0, b - tol), Math.max(0, g - tol), Math.max(0, r - tol), 0
+    ]);
+    const high = new cv.Mat(blurred.rows, blurred.cols, blurred.type(), [
+      Math.min(255, b + tol), Math.min(255, g + tol), Math.min(255, r + tol), 255
+    ]);
     mask = new cv.Mat();
-    cv.inRange(hsv, low, high, mask);
+    cv.inRange(blurred, low, high, mask);
     low.delete();
     high.delete();
 
-    // Morphology: open removes small noise, close fills small holes
     kernelSmall = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
     kernelLarge = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(11, 11));
     opened = new cv.Mat();
@@ -51,7 +68,6 @@ export function detectColorMask(src, profile) {
   } finally {
     if (bgr) bgr.delete();
     if (blurred) blurred.delete();
-    if (hsv) hsv.delete();
     if (mask) mask.delete();
     if (kernelSmall) kernelSmall.delete();
     if (kernelLarge) kernelLarge.delete();
@@ -61,38 +77,40 @@ export function detectColorMask(src, profile) {
 }
 
 /**
- * Optimized multi-profile detection: converts to HSV once, then runs
- * inRange for each profile. Applies Gaussian blur before conversion.
+ * Optimized multi-profile detection using RGB color difference: converts to
+ * BGR and blurs once, then runs inRange for each profile with ±tolerance.
  *
  * @param {cv.Mat} src - Source RGBA Mat.
- * @param {Array} profiles - Array of HSV profile objects.
+ * @param {Array<{targetColor: string, tolerance: number}>} profiles - Array of color profiles.
  * @returns {Array<{profileIndex: number, mask: cv.Mat}>} Array of masks per profile.
  */
 export function detectColorMasks(src, profiles) {
-  let bgr = null, blurred = null, hsv = null;
+  let bgr = null, blurred = null;
   let kernelSmall = null, kernelLarge = null;
   const results = [];
   try {
     bgr = new cv.Mat();
     cv.cvtColor(src, bgr, cv.COLOR_RGBA2BGR);
 
-    // Gaussian blur to suppress camera noise
     blurred = new cv.Mat();
     cv.GaussianBlur(bgr, blurred, new cv.Size(7, 7), 0);
 
-    hsv = new cv.Mat();
-    cv.cvtColor(blurred, hsv, cv.COLOR_BGR2HSV);
-
-    // Larger kernels for better morphology on post-it sized objects
     kernelSmall = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
     kernelLarge = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(11, 11));
 
     for (let i = 0; i < profiles.length; i++) {
       const p = profiles[i];
-      const low = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [p.hueMin, p.satMin, p.valMin, 0]);
-      const high = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [p.hueMax, p.satMax, p.valMax, 255]);
+      const { r, g, b } = hexToRgb(p.targetColor);
+      const tol = p.tolerance;
+
+      const low = new cv.Mat(blurred.rows, blurred.cols, blurred.type(), [
+        Math.max(0, b - tol), Math.max(0, g - tol), Math.max(0, r - tol), 0
+      ]);
+      const high = new cv.Mat(blurred.rows, blurred.cols, blurred.type(), [
+        Math.min(255, b + tol), Math.min(255, g + tol), Math.min(255, r + tol), 255
+      ]);
       const mask = new cv.Mat();
-      cv.inRange(hsv, low, high, mask);
+      cv.inRange(blurred, low, high, mask);
       low.delete();
       high.delete();
 
@@ -110,7 +128,6 @@ export function detectColorMasks(src, profiles) {
   } finally {
     if (bgr) bgr.delete();
     if (blurred) blurred.delete();
-    if (hsv) hsv.delete();
     if (kernelSmall) kernelSmall.delete();
     if (kernelLarge) kernelLarge.delete();
   }

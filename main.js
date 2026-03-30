@@ -32,6 +32,9 @@ let cameraPreviewCanvas = null;
 let cameraPreviewCtx = null;
 let maskPreviewCanvas = null;
 
+/** Surfaces detected this frame — drawn in the afterRender callback. */
+let currentSurfaces = [];
+
 // ═════════════════════════════════════════════
 // OpenCV ready
 // ═════════════════════════════════════════════
@@ -64,10 +67,11 @@ function waitForOpenCvReady() {
 // Init
 // ═════════════════════════════════════════════
 async function init() {
-  // Force clear stale calibration from older versions
+  // Force clear stale calibration from older versions (HSV-format profiles)
   const loaded = loadCalibration();
-  if (loaded && (CONFIG.stabilizerTolerance <= 10 || CONFIG.cornerPin[0].x > 0)) {
-    console.warn('[init] Clearing stale calibration (old cornerPin or tolerance).');
+  const hasOldFormat = loaded && CONFIG.colorProfiles.some(p => p.hueMin !== undefined);
+  if (loaded && (hasOldFormat || CONFIG.stabilizerTolerance <= 10 || CONFIG.cornerPin[0].x > 0)) {
+    console.warn('[init] Clearing stale calibration (old format or bad values).');
     clearCalibration();
     location.reload();
     return;
@@ -82,9 +86,46 @@ async function init() {
   // Force transparent background on physicsCanvas (in case Matter.js overrides it)
   physicsCanvas.style.background = 'transparent';
 
-  // Draw camera feed behind physics bodies after each Matter.js render frame
+  // Draw camera feed behind physics bodies after each Matter.js render frame,
+  // and draw detected surfaces as glowing overlays on top.
   Matter.Events.on(physics.render, 'afterRender', () => {
     const ctx = physicsCanvas.getContext('2d');
+
+    // ── Draw surface overlays on top of physics bodies ──
+    if (CONFIG.showSurfaces && currentSurfaces.length > 0) {
+      ctx.save();
+      for (const surface of currentSurfaces) {
+        const color = surface.displayColor || '#0f0';
+        if (!surface.corners || surface.corners.length < 4) continue;
+
+        // Glow effect
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 12;
+
+        // Semi-transparent fill
+        ctx.fillStyle = color + '30';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
+
+        ctx.beginPath();
+        ctx.moveTo(surface.corners[0].x, surface.corners[0].y);
+        for (let i = 1; i < surface.corners.length; i++) {
+          ctx.lineTo(surface.corners[i].x, surface.corners[i].y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw a bright inner edge for visibility
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = color + 'AA';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // ── Draw camera feed behind everything (destination-over) ──
     ctx.save();
     ctx.globalCompositeOperation = 'destination-over';
     if (CONFIG.showCameraFeed && video.readyState >= 2) {
@@ -257,7 +298,7 @@ function mainLoop() {
             ...obj,
             profileIndex,
             profileName: profile.name,
-            displayColor: profile.displayColor
+            displayColor: profile.targetColor
           });
         }
 
@@ -293,12 +334,15 @@ function mainLoop() {
     // 6. Sync physics — create/update static bodies from stabilized post-its
     syncPhysicsBodies(physics.world, stabilized, bodyRegistry);
 
-    // 7. Debug overlay — always show detection rectangles; corner pin handles on D toggle
+    // 7. Store surfaces for the afterRender overlay drawing
+    currentSurfaces = stabilized;
+
+    // 8. Debug overlay — always show detection rectangles; corner pin handles on D toggle
     debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-    drawDebugOverlay(debugCtx, stabilized, bodyRegistry.size);
+    drawDebugOverlay(debugCtx, stabilized, getDynamicBodyCount());
     if (showDebug && cornerPinDraw) cornerPinDraw();
 
-    // 8. Periodic cleanup of dynamic bodies
+    // 9. Periodic cleanup of dynamic bodies
     if (++cleanupCounter % 60 === 0) {
       cleanupDynamicBodies(physics.world);
     }
@@ -417,6 +461,19 @@ function buildCalibrationUI() {
   feedRow.appendChild(feedLbl);
   previewSection.appendChild(feedRow);
 
+  // Show surfaces toggle
+  const surfRow = document.createElement('div');
+  surfRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+  const surfCheck = document.createElement('input');
+  surfCheck.type = 'checkbox'; surfCheck.checked = CONFIG.showSurfaces;
+  surfCheck.onchange = () => { CONFIG.showSurfaces = surfCheck.checked; debouncedSave(); };
+  surfRow.appendChild(surfCheck);
+  const surfLbl = document.createElement('span');
+  surfLbl.textContent = 'Show detected surfaces overlay';
+  surfLbl.style.fontSize = '11px';
+  surfRow.appendChild(surfLbl);
+  previewSection.appendChild(surfRow);
+
   panel.appendChild(previewSection);
 
   // ── Separator ──
@@ -437,8 +494,8 @@ function buildCalibrationUI() {
     CONFIG.colorProfiles.forEach((p, i) => {
       const btn = document.createElement('button');
       btn.textContent = p.name;
-      btn.style.cssText = `padding:4px 10px;border:2px solid ${p.displayColor};border-radius:6px;cursor:pointer;
-        font:12px monospace;color:#fff;background:${i === activeTab ? p.displayColor + '44' : 'transparent'};`;
+      btn.style.cssText = `padding:4px 10px;border:2px solid ${p.targetColor};border-radius:6px;cursor:pointer;
+        font:12px monospace;color:#fff;background:${i === activeTab ? p.targetColor + '44' : 'transparent'};`;
       btn.onclick = () => { activeTab = i; activeProfileIdx = i; renderTabs(); renderProfileSliders(i); };
       tabBar.appendChild(btn);
     });
@@ -448,13 +505,13 @@ function buildCalibrationUI() {
     addBtn.title = 'Add color profile';
     addBtn.style.cssText = 'padding:4px 8px;border:1px solid #6cf;border-radius:6px;cursor:pointer;font:bold 14px monospace;color:#6cf;background:transparent;';
     addBtn.onclick = () => {
-      const colors = ['#f00', '#00f', '#ff0', '#0ff', '#f0f', '#fa0'];
+      const colors = ['#E84040', '#4040E8', '#E8E840', '#40E8E8', '#E840E8', '#E8A040'];
       const names = ['Red', 'Blue', 'Yellow', 'Cyan', 'Magenta', 'Orange'];
       const idx = CONFIG.colorProfiles.length % colors.length;
       CONFIG.colorProfiles.push({
-        name: names[idx], hueMin: 0, hueMax: 179,
-        satMin: 80, satMax: 255, valMin: 80, valMax: 255,
-        displayColor: colors[idx]
+        name: names[idx],
+        targetColor: colors[idx],
+        tolerance: 55,
       });
       activeTab = CONFIG.colorProfiles.length - 1;
       activeProfileIdx = activeTab;
@@ -470,20 +527,21 @@ function buildCalibrationUI() {
     const p = CONFIG.colorProfiles[idx];
     if (!p) return;
 
-    // Profile name
+    // ── Profile name + target color picker ──
     const nameRow = document.createElement('div');
-    nameRow.style.cssText = 'margin-bottom:6px;display:flex;align-items:center;gap:6px;';
+    nameRow.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:6px;';
     const nameInput = document.createElement('input');
     nameInput.type = 'text'; nameInput.value = p.name;
     nameInput.style.cssText = 'width:80px;background:#333;border:1px solid #555;color:#fff;padding:2px 6px;border-radius:4px;font:12px monospace;';
     nameInput.oninput = () => { p.name = nameInput.value; renderTabs(); debouncedSave(); };
     nameRow.appendChild(nameInput);
 
-    // Color picker
+    // Target color picker — this is both the detection color AND the display color
     const colorInput = document.createElement('input');
-    colorInput.type = 'color'; colorInput.value = p.displayColor;
-    colorInput.style.cssText = 'width:30px;height:24px;border:none;cursor:pointer;';
-    colorInput.oninput = () => { p.displayColor = colorInput.value; renderTabs(); debouncedSave(); };
+    colorInput.type = 'color'; colorInput.value = p.targetColor;
+    colorInput.title = 'Target color to detect';
+    colorInput.style.cssText = 'width:36px;height:28px;border:2px solid #888;border-radius:4px;cursor:pointer;padding:0;';
+    colorInput.oninput = () => { p.targetColor = colorInput.value; renderTabs(); debouncedSave(); };
     nameRow.appendChild(colorInput);
 
     // Remove button (only if more than one profile)
@@ -501,32 +559,46 @@ function buildCalibrationUI() {
     }
     profileContainer.appendChild(nameRow);
 
-    // HSV sliders
-    const sliders = [
-      { key: 'hueMin', min: 0, max: 179, label: 'Hue Min' },
-      { key: 'hueMax', min: 0, max: 179, label: 'Hue Max' },
-      { key: 'satMin', min: 0, max: 255, label: 'Sat Min' },
-      { key: 'satMax', min: 0, max: 255, label: 'Sat Max' },
-      { key: 'valMin', min: 0, max: 255, label: 'Val Min' },
-      { key: 'valMax', min: 0, max: 255, label: 'Val Max' },
-    ];
-    for (const s of sliders) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;margin:3px 0;';
-      const lbl = document.createElement('span');
-      lbl.textContent = s.label;
-      lbl.style.cssText = 'width:62px;font-size:11px;';
-      const input = document.createElement('input');
-      input.type = 'range'; input.min = s.min; input.max = s.max; input.step = 1;
-      input.value = p[s.key];
-      input.style.cssText = 'flex:1;accent-color:' + p.displayColor + ';';
-      const val = document.createElement('span');
-      val.textContent = p[s.key];
-      val.style.cssText = 'width:30px;text-align:right;font-size:11px;font-weight:bold;margin-left:4px;';
-      input.oninput = () => { p[s.key] = Number(input.value); val.textContent = input.value; debouncedSave(); };
-      row.appendChild(lbl); row.appendChild(input); row.appendChild(val);
-      profileContainer.appendChild(row);
+    // ── Color info ──
+    const infoRow = document.createElement('div');
+    infoRow.style.cssText = 'font-size:10px;color:#aaa;margin-bottom:6px;';
+    function updateInfo() {
+      const hex = p.targetColor;
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      infoRow.textContent = `RGB(${r}, ${g}, ${b}) ± ${p.tolerance} per channel`;
     }
+    updateInfo();
+    profileContainer.appendChild(infoRow);
+
+    // ── Tolerance slider ──
+    const tolRow = document.createElement('div');
+    tolRow.style.cssText = 'display:flex;align-items:center;margin:4px 0 2px;';
+    const tolLbl = document.createElement('span');
+    tolLbl.textContent = 'Tolerance';
+    tolLbl.style.cssText = 'width:72px;font-size:12px;font-weight:bold;';
+    const tolInput = document.createElement('input');
+    tolInput.type = 'range'; tolInput.min = 10; tolInput.max = 150; tolInput.step = 1;
+    tolInput.value = p.tolerance;
+    tolInput.style.cssText = 'flex:1;accent-color:' + p.targetColor + ';';
+    const tolVal = document.createElement('span');
+    tolVal.textContent = p.tolerance;
+    tolVal.style.cssText = 'width:34px;text-align:right;font-size:12px;font-weight:bold;margin-left:4px;';
+    tolInput.oninput = () => {
+      p.tolerance = Number(tolInput.value);
+      tolVal.textContent = tolInput.value;
+      updateInfo();
+      debouncedSave();
+    };
+    tolRow.appendChild(tolLbl); tolRow.appendChild(tolInput); tolRow.appendChild(tolVal);
+    profileContainer.appendChild(tolRow);
+
+    // ── Explanation ──
+    const helpRow = document.createElement('div');
+    helpRow.style.cssText = 'font-size:10px;color:#666;margin-top:4px;line-height:1.4;';
+    helpRow.textContent = 'Lower tolerance = stricter match (only very similar colors). Higher = more lenient (broader color range detected).';
+    profileContainer.appendChild(helpRow);
   }
 
   renderTabs();
