@@ -57,8 +57,8 @@ export function detectColorMask(src, profile) {
     low.delete();
     high.delete();
 
-    kernelSmall = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
-    kernelLarge = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(11, 11));
+    kernelSmall = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+    kernelLarge = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
     opened = new cv.Mat();
     cv.morphologyEx(mask, opened, cv.MORPH_OPEN, kernelSmall);
     closed = new cv.Mat();
@@ -95,8 +95,8 @@ export function detectColorMasks(src, profiles) {
     blurred = new cv.Mat();
     cv.GaussianBlur(bgr, blurred, new cv.Size(7, 7), 0);
 
-    kernelSmall = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
-    kernelLarge = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(11, 11));
+    kernelSmall = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+    kernelLarge = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
 
     for (let i = 0; i < profiles.length; i++) {
       const p = profiles[i];
@@ -153,7 +153,11 @@ export function findContours(mask) {
       const cnt = contours.get(i);
       const area = cv.contourArea(cnt);
       if (area >= CONFIG.minContourArea) {
-        filtered.push_back(cnt);
+        // Deep-clone so filtered owns its data independently of `contours`.
+        // This survives contours.delete() in the finally block.
+        const cloned = cnt.clone();
+        filtered.push_back(cloned);
+        cloned.delete();
       }
       cnt.delete();
     }

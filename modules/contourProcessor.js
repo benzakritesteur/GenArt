@@ -38,7 +38,7 @@ export function processContours(contours) {
 
       // Aspect ratio filter — reject very elongated shapes (not post-its)
       const aspect = w / h;
-      if (aspect > 4.0) continue;
+      if (aspect > 8.0) continue;
 
       // Get corners from the rotated rectangle (4 precise corner points)
       const box = cv.boxPoints(rotatedRect);

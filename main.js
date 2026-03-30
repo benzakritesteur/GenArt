@@ -70,8 +70,8 @@ async function init() {
   // Force clear stale calibration from older versions (HSV-format profiles)
   const loaded = loadCalibration();
   const hasOldFormat = loaded && CONFIG.colorProfiles.some(p => p.hueMin !== undefined);
-  if (loaded && (hasOldFormat || CONFIG.stabilizerTolerance <= 10 || CONFIG.cornerPin[0].x > 0)) {
-    console.warn('[init] Clearing stale calibration (old format or bad values).');
+  if (loaded && hasOldFormat) {
+    console.warn('[init] Clearing stale calibration (old HSV format detected).');
     clearCalibration();
     location.reload();
     return;
@@ -79,6 +79,12 @@ async function init() {
 
   // 1. Init camera FIRST — no OpenCV needed, user sees feed immediately
   await initCamera(video);
+
+  // Canvas internal resolution — set BEFORE physics init so all contexts start at correct size
+  [captureCanvas, debugCanvas, physicsCanvas].forEach(c => {
+    c.width = CONFIG.canvasWidth;
+    c.height = CONFIG.canvasHeight;
+  });
 
   // 2. Init physics — no OpenCV needed
   physics = initPhysics(physicsCanvas);
@@ -138,11 +144,6 @@ async function init() {
     ctx.restore();
   });
 
-  // Canvas internal resolution
-  [captureCanvas, debugCanvas, physicsCanvas].forEach(c => {
-    c.width = CONFIG.canvasWidth;
-    c.height = CONFIG.canvasHeight;
-  });
 
   // Make canvases fill the viewport via CSS
   function resizeToViewport() {
@@ -337,6 +338,11 @@ function mainLoop() {
     // 7. Store surfaces for the afterRender overlay drawing
     currentSurfaces = stabilized;
 
+    // ── Diagnostic logging (throttled: every ~2s at 60fps) ──
+    if (cleanupCounter % 120 === 0) {
+      console.log(`[detection] raw=${allDetections.length} stabilized=${stabilized.length} bodies=${bodyRegistry.size} balls=${getDynamicBodyCount()}`);
+    }
+
     // 8. Debug overlay — always show detection rectangles; corner pin handles on D toggle
     debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
     drawDebugOverlay(debugCtx, stabilized, getDynamicBodyCount());
@@ -426,9 +432,33 @@ function buildCalibrationUI() {
   // Camera preview canvas
   const camPrev = document.createElement('canvas');
   camPrev.width = 160; camPrev.height = 90;
-  camPrev.style.cssText = 'border:1px solid #444;border-radius:4px;background:#000;';
+  camPrev.style.cssText = 'border:1px solid #444;border-radius:4px;background:#000;cursor:crosshair;';
   cameraPreviewCanvas = camPrev;
   cameraPreviewCtx = camPrev.getContext('2d');
+
+  // ── Eyedropper: click camera preview to pick target color ──
+  camPrev.title = 'Click to pick target color for active profile';
+  camPrev.addEventListener('click', (e) => {
+    const rect = camPrev.getBoundingClientRect();
+    const x = Math.round((e.clientX - rect.left) * (camPrev.width / rect.width));
+    const y = Math.round((e.clientY - rect.top) * (camPrev.height / rect.height));
+    try {
+      const pixel = cameraPreviewCtx.getImageData(x, y, 1, 1).data;
+      const hex = '#' + [pixel[0], pixel[1], pixel[2]].map(v => v.toString(16).padStart(2, '0')).join('');
+      const profile = CONFIG.colorProfiles[activeProfileIdx];
+      if (profile) {
+        profile.targetColor = hex;
+        console.log(`[eyedropper] Picked color ${hex} for profile "${profile.name}"`);
+        renderTabs();
+        renderProfileSliders(activeProfileIdx);
+        debouncedSave();
+        flash(`Picked ${hex} for ${profile.name}`, '#6f6');
+      }
+    } catch (err) {
+      console.warn('[eyedropper] Failed to read pixel:', err);
+    }
+  });
+
   previewContainer.appendChild(camPrev);
 
   // Mask preview canvas
@@ -443,7 +473,7 @@ function buildCalibrationUI() {
   // Preview labels
   const labelRow = document.createElement('div');
   labelRow.style.cssText = 'display:flex;gap:4px;font-size:10px;color:#888;margin-bottom:6px;';
-  const camLbl = document.createElement('span'); camLbl.textContent = 'Camera Feed'; camLbl.style.width = '160px';
+  const camLbl = document.createElement('span'); camLbl.textContent = '🎯 Click to pick color'; camLbl.style.width = '160px';
   const maskLbl = document.createElement('span'); maskLbl.textContent = 'Detection Mask (active profile)';
   labelRow.appendChild(camLbl); labelRow.appendChild(maskLbl);
   previewSection.appendChild(labelRow);
@@ -511,7 +541,7 @@ function buildCalibrationUI() {
       CONFIG.colorProfiles.push({
         name: names[idx],
         targetColor: colors[idx],
-        tolerance: 55,
+        tolerance: 70,
       });
       activeTab = CONFIG.colorProfiles.length - 1;
       activeProfileIdx = activeTab;

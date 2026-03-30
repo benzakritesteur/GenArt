@@ -21,14 +21,14 @@ export const CONFIG = {
   // ── Multi-color detection profiles (RGB difference) ──
   /** @type {ColorProfile[]} */
   colorProfiles: [
-    { name: 'Yellow', targetColor: '#E2C829', tolerance: 55 },
-    { name: 'Pink',   targetColor: '#E8509A', tolerance: 55 },
-    { name: 'Blue',   targetColor: '#3B7DD8', tolerance: 55 },
-    { name: 'Green',  targetColor: '#3BB54A', tolerance: 55 },
+    { name: 'Yellow', targetColor: '#E2C829', tolerance: 70 },
+    { name: 'Pink',   targetColor: '#E8509A', tolerance: 70 },
+    { name: 'Blue',   targetColor: '#3B7DD8', tolerance: 70 },
+    { name: 'Green',  targetColor: '#3BB54A', tolerance: 70 },
   ],
 
   // ── Contour ──
-  /** @type {number} */ minContourArea: 300,
+  /** @type {number} */ minContourArea: 150,
 
   // ── Stabilizer ──
   /** @type {number} */ stabilizerTolerance: 60,
