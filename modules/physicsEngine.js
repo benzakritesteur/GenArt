@@ -126,25 +126,54 @@ export function syncPhysicsBodies(world, stabilizedObjects, bodyRegistry) {
     if (typeof id !== 'number') continue;
     currentIds.add(id);
     let body = bodyRegistry.get(id);
-    const vertices = obj.corners.map(pt => ({ x: pt.x, y: pt.y }));
+
+    const w = obj.size.width;
+    const h = obj.size.height;
+    const angleRad = obj.angle * Math.PI / 180;
+
     if (!body) {
-      body = Matter.Bodies.fromVertices(
+      // Use rectangle — far more reliable than fromVertices
+      body = Matter.Bodies.rectangle(
         obj.center.x,
         obj.center.y,
-        [vertices],
-        { isStatic: true, render: { fillStyle: 'rgba(0,255,0,0.2)' } },
-        true
+        Math.max(w, 4),   // minimum 4px to avoid degenerate bodies
+        Math.max(h, 4),
+        { isStatic: true, render: { fillStyle: 'rgba(0,255,0,0.25)', strokeStyle: '#0f0', lineWidth: 1 } }
       );
+      if (!body) continue; // safety: skip if creation fails
+      Matter.Body.setAngle(body, angleRad);
       Matter.World.add(world, body);
       bodyRegistry.set(id, body);
     } else {
-      const d = dist(obj.center, body.position);
-      const angleDelta = Math.abs(obj.angle - body.angle * 180 / Math.PI);
-      if (d > CONFIG.stabilizerTolerance || angleDelta > 5) {
-        Matter.Body.setPosition(body, obj.center);
-        Matter.Body.setAngle(body, obj.angle * Math.PI / 180);
+      // Check if shape changed significantly → recreate
+      const prevW = body._genartW || 0;
+      const prevH = body._genartH || 0;
+      const sizeDelta = Math.abs(w - prevW) + Math.abs(h - prevH);
+      if (sizeDelta > 20) {
+        // Size changed a lot — remove old, create new
+        Matter.World.remove(world, body);
+        body = Matter.Bodies.rectangle(
+          obj.center.x, obj.center.y,
+          Math.max(w, 4), Math.max(h, 4),
+          { isStatic: true, render: { fillStyle: 'rgba(0,255,0,0.25)', strokeStyle: '#0f0', lineWidth: 1 } }
+        );
+        if (!body) { bodyRegistry.delete(id); continue; }
+        Matter.Body.setAngle(body, angleRad);
+        Matter.World.add(world, body);
+        bodyRegistry.set(id, body);
+      } else {
+        // Update position/angle if changed
+        const d = dist(obj.center, body.position);
+        const angleDelta = Math.abs(obj.angle - body.angle * 180 / Math.PI);
+        if (d > 2 || angleDelta > 2) {
+          Matter.Body.setPosition(body, obj.center);
+          Matter.Body.setAngle(body, angleRad);
+        }
       }
     }
+    // Store current size for change detection next frame
+    body._genartW = w;
+    body._genartH = h;
   }
 
   for (const [id, body] of bodyRegistry.entries()) {

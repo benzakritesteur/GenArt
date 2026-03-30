@@ -51,8 +51,8 @@ export const CONFIG = {
   /** @type {number} */ minContourArea: 500,
 
   // ── Stabilizer ──
-  /** @type {number} */ stabilizerTolerance: 8,
-  /** @type {number} */ stabilizerFreezeFrames: 10,
+  /** @type {number} */ stabilizerTolerance: 50,
+  /** @type {number} */ stabilizerFreezeFrames: 15,
 
   // ── Canvas ──
   /** @type {number} */ canvasWidth: 1280,

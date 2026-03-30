@@ -23,6 +23,8 @@ const debugCanvas = document.getElementById('debugCanvas');
 const physicsCanvas = document.getElementById('physicsCanvas');
 const webglCanvas = document.getElementById('webglCanvas');
 const debugCtx = debugCanvas.getContext('2d');
+// Create capture context once with willReadFrequently for cv.imread performance
+const captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
 
 let showDebug = true;
 let currentTransformMat = null;
@@ -145,8 +147,6 @@ async function init() {
 
   // ── Register plugins ──
   const pluginCtx = { engine: physics.engine };
-  collisionSparkPlugin.hooks._ctx = pluginCtx; // pass context for init
-  trailEffectPlugin.hooks._ctx = pluginCtx;
   // Wrap init/destroy to receive engine context
   const wrapPlugin = (p) => ({
     ...p,
@@ -224,8 +224,12 @@ function mainLoop() {
   // Plugin hook: before frame
   pluginManager.run('onBeforeFrame', { video, captureCanvas });
 
-  // 1. Capture frame
-  captureFrame(video, captureCanvas, captureCanvas.getContext('2d'));
+  // 1. Capture frame — skip if video not ready
+  if (video.readyState < 2) {
+    requestAnimationFrame(mainLoop);
+    return;
+  }
+  captureFrame(video, captureCanvas, captureCtx);
 
   let src = null;
   try {
@@ -238,16 +242,25 @@ function mainLoop() {
     let allDetections = [];
     for (const { profileIndex, mask } of masksInfo) {
       const profile = CONFIG.colorProfiles[profileIndex];
-      const contoursVec = findContours(mask);
-      const contours = [];
-      for (let i = 0; i < contoursVec.size(); ++i) contours.push(contoursVec.get(i));
+      const contours = findContours(mask);
       const detected = processContours(contours);
 
       // 4. Warp + tag with profile info
       for (const obj of detected) {
         const warpedCorners = warpPoints(obj.corners, currentTransformMat);
+        // Recompute center, size, angle from warped corners (canvas-space)
+        const cx = warpedCorners.reduce((s, p) => s + p.x, 0) / 4;
+        const cy = warpedCorners.reduce((s, p) => s + p.y, 0) / 4;
+        const edgeLen = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+        const w = edgeLen(warpedCorners[0], warpedCorners[1]);
+        const h = edgeLen(warpedCorners[1], warpedCorners[2]);
+        const dx = warpedCorners[1].x - warpedCorners[0].x;
+        const dy = warpedCorners[1].y - warpedCorners[0].y;
+        const warpedAngle = Math.atan2(dy, dx) * 180 / Math.PI;
         allDetections.push({
-          ...obj,
+          center: { x: cx, y: cy },
+          size: { width: w, height: h },
+          angle: warpedAngle,
           corners: warpedCorners,
           profileIndex,
           profileName: profile.name,
@@ -257,7 +270,6 @@ function mainLoop() {
 
       // Cleanup OpenCV mats
       mask.delete();
-      contoursVec.delete();
       contours.forEach(c => c.delete());
     }
 
