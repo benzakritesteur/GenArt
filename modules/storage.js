@@ -19,7 +19,6 @@ function snapshot() {
     canvasWidth: CONFIG.canvasWidth,
     canvasHeight: CONFIG.canvasHeight,
     cornerPin: CONFIG.cornerPin.map(p => ({ ...p })),
-    cameraROI: { ...CONFIG.cameraROI },
     cameraCornerPin: CONFIG.cameraCornerPin.map(p => ({ ...p })),
     spawnInterval: CONFIG.spawnInterval,
     maxDynamicBodies: CONFIG.maxDynamicBodies,
@@ -61,9 +60,6 @@ function mergeIntoConfig(data) {
   }
   if (Array.isArray(data.cameraCornerPin) && data.cameraCornerPin.length === 4) {
     CONFIG.cameraCornerPin = data.cameraCornerPin.map(p => ({ ...p }));
-  }
-  if (data.cameraROI && typeof data.cameraROI.w === 'number') {
-    CONFIG.cameraROI = { ...data.cameraROI };
   }
   if (data.spawnPoint && typeof data.spawnPoint.x === 'number') {
     CONFIG.spawnPoint = { ...data.spawnPoint };

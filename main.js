@@ -19,7 +19,7 @@ const debugCanvas = document.getElementById('debugCanvas');
 const physicsCanvas = document.getElementById('physicsCanvas');
 const debugCtx = debugCanvas.getContext('2d');
 
-let showDebug = true;
+let showDebug = false;
 const bodyRegistry = new Map();
 let physics = null;
 let fpsTick = null;
@@ -214,23 +214,7 @@ async function init() {
   // Auto-spawn timer
   startAutoSpawn();
 
-  // Start render loop NOW (camera + physics work without OpenCV)
-  requestAnimationFrame(mainLoop);
-
-  // 3. Wait for OpenCV in the background
-  try {
-    await waitForOpenCvReady();
-  } catch (err) {
-    console.error('OpenCV.js failed to load:', err);
-    const errDiv = document.getElementById('cameraError');
-    if (errDiv) {
-      errDiv.textContent = 'OpenCV.js failed to load — color detection is disabled. Refresh to retry.';
-      errDiv.style.display = 'block';
-    }
-    return; // keep running without detection
-  }
-
-  // 4. OpenCV-dependent setup: corner pin UIs
+  // 3. Init corner pin UIs — no OpenCV needed, available immediately
   // Projector output warp (yellow handles — toggle with D key)
   cornerPinDraw = initCornerPinUI(debugCanvas, newCorners => {
     CONFIG.cornerPin = newCorners.map(p => ({ ...p }));
@@ -243,6 +227,22 @@ async function init() {
     CONFIG.cameraCornerPin = newCorners.map(p => ({ ...p }));
     debouncedSave();
   }, { initialPoints: CONFIG.cameraCornerPin, handleColor: 'cyan', lineColor: '#0ff', label: 'Camera' });
+
+  // Start render loop NOW (camera + physics work without OpenCV)
+  requestAnimationFrame(mainLoop);
+
+  // 4. Wait for OpenCV in the background
+  try {
+    await waitForOpenCvReady();
+  } catch (err) {
+    console.error('OpenCV.js failed to load:', err);
+    const errDiv = document.getElementById('cameraError');
+    if (errDiv) {
+      errDiv.textContent = 'OpenCV.js failed to load — color detection is disabled. Refresh to retry.';
+      errDiv.style.display = 'block';
+    }
+    return; // keep running without detection
+  }
 
   opencvReady = true;
   console.log('[init] OpenCV ready — detection pipeline active');
@@ -274,21 +274,6 @@ function mainLoop() {
   // Update camera preview (always, even without OpenCV)
   if (cameraPreviewCtx && video.readyState >= 2) {
     cameraPreviewCtx.drawImage(video, 0, 0, cameraPreviewCanvas.width, cameraPreviewCanvas.height);
-    // Draw ROI rectangle on preview if not full-frame
-    const roi = CONFIG.cameraROI;
-    if (roi.x > 0 || roi.y > 0 || roi.w < CONFIG.canvasWidth || roi.h < CONFIG.canvasHeight) {
-      const sx = (roi.x / CONFIG.canvasWidth) * cameraPreviewCanvas.width;
-      const sy = (roi.y / CONFIG.canvasHeight) * cameraPreviewCanvas.height;
-      const sw = (roi.w / CONFIG.canvasWidth) * cameraPreviewCanvas.width;
-      const sh = (roi.h / CONFIG.canvasHeight) * cameraPreviewCanvas.height;
-      cameraPreviewCtx.save();
-      cameraPreviewCtx.strokeStyle = '#0f0';
-      cameraPreviewCtx.lineWidth = 2;
-      cameraPreviewCtx.setLineDash([4, 3]);
-      cameraPreviewCtx.strokeRect(sx, sy, sw, sh);
-      cameraPreviewCtx.setLineDash([]);
-      cameraPreviewCtx.restore();
-    }
   }
 
   // Skip detection if video or OpenCV isn't ready yet
@@ -301,8 +286,8 @@ function mainLoop() {
     return;
   }
 
-  // 1. Capture frame (with ROI crop / digital zoom)
-  captureFrame(video, captureCanvas, captureCanvas.getContext('2d'), CONFIG.cameraROI);
+  // 1. Capture full frame
+  captureFrame(video, captureCanvas, captureCanvas.getContext('2d'));
 
   let src = null;
   try {
@@ -752,45 +737,46 @@ function buildCalibrationUI() {
 
   // ── Camera controls ──
   const camTitle = document.createElement('div');
-  camTitle.textContent = '📷 Camera Controls';
+  camTitle.textContent = '📷 Camera Framing';
   camTitle.style.cssText = 'font-weight:bold;margin-bottom:6px;';
   panel.appendChild(camTitle);
 
-  // Camera perspective toggle hint
-  const camPinHint = document.createElement('div');
-  camPinHint.style.cssText = 'font-size:10px;color:#0ff;margin-bottom:6px;';
-  camPinHint.textContent = 'Press C to show/hide camera correction handles (cyan)';
-  panel.appendChild(camPinHint);
+  const camDesc = document.createElement('div');
+  camDesc.style.cssText = 'font-size:10px;color:#aaa;margin-bottom:6px;line-height:1.4;';
+  camDesc.textContent = 'Drag the 4 cyan handles to crop, zoom, and correct the camera angle. This defines which part of the camera image maps to the detection area.';
+  panel.appendChild(camDesc);
 
-  // ROI sliders
-  const roiLabel = document.createElement('div');
-  roiLabel.textContent = 'Region of Interest (crop / zoom)';
-  roiLabel.style.cssText = 'font-size:11px;color:#aaa;margin-bottom:4px;';
-  panel.appendChild(roiLabel);
+  // Show / hide camera corner pin handles
+  const camPinRow = document.createElement('div');
+  camPinRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+  const camPinCheck = document.createElement('input');
+  camPinCheck.type = 'checkbox'; camPinCheck.checked = showCameraPin;
+  camPinCheck.onchange = () => { showCameraPin = camPinCheck.checked; };
+  camPinRow.appendChild(camPinCheck);
+  const camPinLbl = document.createElement('span');
+  camPinLbl.textContent = 'Show camera handles (C key)';
+  camPinLbl.style.cssText = 'font-size:11px;color:#0ff;';
+  camPinRow.appendChild(camPinLbl);
+  panel.appendChild(camPinRow);
 
-  addSliderRow(panel, 'ROI X', CONFIG.cameraROI.x, 0, CONFIG.canvasWidth - 100, 10, v => {
-    CONFIG.cameraROI.x = v; debouncedSave();
-  });
-  addSliderRow(panel, 'ROI Y', CONFIG.cameraROI.y, 0, CONFIG.canvasHeight - 100, 10, v => {
-    CONFIG.cameraROI.y = v; debouncedSave();
-  });
-  addSliderRow(panel, 'ROI W', CONFIG.cameraROI.w, 100, CONFIG.canvasWidth, 10, v => {
-    CONFIG.cameraROI.w = v; debouncedSave();
-  });
-  addSliderRow(panel, 'ROI H', CONFIG.cameraROI.h, 100, CONFIG.canvasHeight, 10, v => {
-    CONFIG.cameraROI.h = v; debouncedSave();
-  });
-
-  const roiResetBtn = document.createElement('button');
-  roiResetBtn.textContent = 'Reset ROI';
-  roiResetBtn.style.cssText = 'padding:3px 8px;border:1px solid #888;border-radius:4px;color:#aaa;background:transparent;cursor:pointer;font:10px monospace;margin-bottom:4px;';
-  roiResetBtn.onclick = () => {
-    CONFIG.cameraROI = { x: 0, y: 0, w: CONFIG.canvasWidth, h: CONFIG.canvasHeight };
+  // Reset camera corner pin
+  const camResetBtn = document.createElement('button');
+  camResetBtn.textContent = 'Reset Camera Framing';
+  camResetBtn.style.cssText = 'padding:3px 8px;border:1px solid #0ff;border-radius:4px;color:#0ff;background:transparent;cursor:pointer;font:10px monospace;margin-bottom:4px;';
+  camResetBtn.onclick = () => {
+    CONFIG.cameraCornerPin = [
+      { x: 0, y: 0 }, { x: CONFIG.canvasWidth, y: 0 },
+      { x: CONFIG.canvasWidth, y: CONFIG.canvasHeight }, { x: 0, y: CONFIG.canvasHeight }
+    ];
     debouncedSave();
-    buildCalibrationUI(); // refresh sliders
-    flash('ROI reset');
+    // Re-init the camera pin UI with the reset points
+    cameraPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+      CONFIG.cameraCornerPin = newCorners.map(p => ({ ...p }));
+      debouncedSave();
+    }, { initialPoints: CONFIG.cameraCornerPin, handleColor: 'cyan', lineColor: '#0ff', label: 'Camera' });
+    flash('Camera framing reset');
   };
-  panel.appendChild(roiResetBtn);
+  panel.appendChild(camResetBtn);
 
   // ── Separator ──
   panel.appendChild(Object.assign(document.createElement('hr'), { style: { border: '0', borderTop: '1px solid #444', margin: '10px 0' } }));

@@ -74,43 +74,68 @@ export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
   let points = (opts.initialPoints || CONFIG.cornerPin).map(p => ({ ...p }));
   let draggingIdx = null;
   let dragOffset = { x: 0, y: 0 };
-  const HANDLE_RADIUS = 8;
-  const HIT_RADIUS = 15;
+  const HANDLE_RADIUS = 10;
+  const HIT_RADIUS = 20;
+  const EDGE_INSET = HANDLE_RADIUS + 2; // visual inset for handles at canvas edges
+
+  /** Clamp a coordinate inward so handles/lines are visible at canvas edges. */
+  function clampX(v) { return Math.max(EDGE_INSET, Math.min(overlayCanvas.width - EDGE_INSET, v)); }
+  function clampY(v) { return Math.max(EDGE_INSET, Math.min(overlayCanvas.height - EDGE_INSET, v)); }
 
   function draw() {
     ctx.save();
+
+    // Dashed frame — clamp so it's visible even when points are on the canvas edge
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 4]);
     ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < 4; ++i) ctx.lineTo(points[i].x, points[i].y);
+    ctx.moveTo(clampX(points[0].x), clampY(points[0].y));
+    for (let i = 1; i < 4; ++i) ctx.lineTo(clampX(points[i].x), clampY(points[i].y));
     ctx.closePath();
     ctx.stroke();
     ctx.setLineDash([]);
+
+    // Handles — drawn at clamped positions so they never clip off-screen
     for (let i = 0; i < 4; ++i) {
+      const hx = clampX(points[i].x);
+      const hy = clampY(points[i].y);
       ctx.beginPath();
-      ctx.arc(points[i].x, points[i].y, HANDLE_RADIUS, 0, 2 * Math.PI);
+      ctx.arc(hx, hy, HANDLE_RADIUS, 0, 2 * Math.PI);
       ctx.fillStyle = handleColor;
       ctx.fill();
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#222';
       ctx.stroke();
+      // Corner number
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 11px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), hx, hy);
     }
+
+    // Small label near handle 1 (top-left area)
     if (label) {
+      const lx = clampX(points[0].x) + HANDLE_RADIUS + 6;
+      const ly = clampY(points[0].y) + 1;
       ctx.fillStyle = handleColor;
       ctx.font = 'bold 11px monospace';
       ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.fillText(label, points[0].x + 12, points[0].y + 2);
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, lx, ly);
     }
+
     ctx.restore();
   }
 
   function getHandleAt(x, y) {
     for (let i = 0; i < 4; ++i) {
-      const dx = x - points[i].x;
-      const dy = y - points[i].y;
+      // Hit-test against the visually clamped position (where the handle is drawn)
+      const hx = clampX(points[i].x);
+      const hy = clampY(points[i].y);
+      const dx = x - hx;
+      const dy = y - hy;
       if (dx * dx + dy * dy <= HIT_RADIUS * HIT_RADIUS) return i;
     }
     return null;

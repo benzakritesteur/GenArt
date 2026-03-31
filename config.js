@@ -49,11 +49,8 @@ export const CONFIG = {
     { x: 0, y: 720 }
   ],
 
-  // ── Camera: ROI crop / digital zoom ──
-  /** @type {{x: number, y: number, w: number, h: number}} */
-  cameraROI: { x: 0, y: 0, w: 1280, h: 720 },
-
-  // ── Camera: perspective correction (input-side corner pin) ──
+  // ── Camera: zoom + perspective correction (input-side corner pin) ──
+  // Drag the 4 cyan handles (C key) to crop, zoom, and correct camera angle.
   /** @type {Point[]} */
   cameraCornerPin: [
     { x: 0, y: 0 },
