@@ -67,6 +67,7 @@ export const CONFIG = {
   /** @type {number} */ dynamicBodyRadius: 12,
   /** @type {string} */ spawnMode: 'random',  // 'random' | 'single'
   /** @type {Point} */ spawnPoint: { x: 640, y: 10 },
+  /** @type {string[]} */ ballColors: ['#6cf', '#fc6', '#f66', '#6f6', '#c6f', '#ff6', '#6ff'],
 
   // ── Display ──
   /** @type {boolean} */ showCameraFeed: true,

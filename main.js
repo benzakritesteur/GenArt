@@ -982,6 +982,95 @@ function buildCalibrationUI() {
     CONFIG.dynamicBodyRadius = v; debouncedSave();
   });
 
+  // ── Ball Colors palette ──
+  const colorsTitle = document.createElement('div');
+  colorsTitle.textContent = '🎨 Ball Colors';
+  colorsTitle.style.cssText = 'font-weight:bold;margin:8px 0 4px;font-size:12px;';
+  panel.appendChild(colorsTitle);
+
+  const colorsContainer = document.createElement('div');
+  colorsContainer.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:6px;';
+  panel.appendChild(colorsContainer);
+
+  /** Rebuild the color swatch row from CONFIG.ballColors. */
+  function renderBallColors() {
+    colorsContainer.innerHTML = '';
+    CONFIG.ballColors.forEach((hex, idx) => {
+      const swatch = document.createElement('div');
+      swatch.style.cssText = `position:relative;width:26px;height:26px;border-radius:50%;border:2px solid #888;cursor:pointer;background:${hex};`;
+      swatch.title = `${hex} — click to change`;
+
+      // ── Delete badge (×) — visible on hover ──
+      if (CONFIG.ballColors.length > 1) {
+        const delBadge = document.createElement('span');
+        delBadge.textContent = '×';
+        delBadge.title = 'Remove this color';
+        delBadge.style.cssText =
+          'position:absolute;top:-6px;right:-6px;width:14px;height:14px;' +
+          'background:#e44;color:#fff;border-radius:50%;font-size:11px;line-height:14px;' +
+          'text-align:center;cursor:pointer;opacity:0;transition:opacity .15s;pointer-events:none;';
+        swatch.appendChild(delBadge);
+        swatch.addEventListener('mouseenter', () => { delBadge.style.opacity = '1'; delBadge.style.pointerEvents = 'auto'; });
+        swatch.addEventListener('mouseleave', () => { delBadge.style.opacity = '0'; delBadge.style.pointerEvents = 'none'; });
+        delBadge.addEventListener('click', e => {
+          e.stopPropagation();
+          CONFIG.ballColors.splice(idx, 1);
+          renderBallColors();
+          debouncedSave();
+        });
+      }
+
+      // Left-click on swatch body: open a hidden color picker to change this color
+      const picker = document.createElement('input');
+      picker.type = 'color';
+      picker.value = hex;
+      picker.style.cssText = 'position:absolute;opacity:0;width:0;height:0;pointer-events:none;';
+      picker.oninput = () => {
+        CONFIG.ballColors[idx] = picker.value;
+        swatch.style.background = picker.value;
+        debouncedSave();
+      };
+      swatch.appendChild(picker);
+      swatch.addEventListener('click', () => picker.click());
+
+      // Right-click: also removes (keep as secondary shortcut)
+      swatch.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        if (CONFIG.ballColors.length <= 1) return;
+        CONFIG.ballColors.splice(idx, 1);
+        renderBallColors();
+        debouncedSave();
+      });
+
+      colorsContainer.appendChild(swatch);
+    });
+
+    // Add-color button
+    const addBtn = document.createElement('div');
+    addBtn.textContent = '+';
+    addBtn.title = 'Add a ball color';
+    addBtn.style.cssText = 'width:26px;height:26px;border-radius:50%;border:2px dashed #6cf;color:#6cf;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;font-size:16px;';
+    addBtn.addEventListener('click', () => {
+      // Pick a random saturated default so it's visible
+      const hue = Math.floor(Math.random() * 360);
+      const newColor = `hsl(${hue}, 80%, 60%)`;
+      // Convert HSL to hex via a temporary canvas
+      const tmp = document.createElement('canvas');
+      tmp.width = 1; tmp.height = 1;
+      const tctx = tmp.getContext('2d');
+      tctx.fillStyle = newColor;
+      tctx.fillRect(0, 0, 1, 1);
+      const [r, g, b] = tctx.getImageData(0, 0, 1, 1).data;
+      const hex = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+      CONFIG.ballColors.push(hex);
+      renderBallColors();
+      debouncedSave();
+    });
+    colorsContainer.appendChild(addBtn);
+  }
+
+  renderBallColors();
+
   // ── Separator ──
   panel.appendChild(Object.assign(document.createElement('hr'), { style: { border: '0', borderTop: '1px solid #444', margin: '10px 0' } }));
 

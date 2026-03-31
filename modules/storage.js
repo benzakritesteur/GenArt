@@ -23,9 +23,11 @@ function snapshot() {
     spawnInterval: CONFIG.spawnInterval,
     maxDynamicBodies: CONFIG.maxDynamicBodies,
     autoSpawnEnabled: CONFIG.autoSpawnEnabled,
+    recycleOldest: CONFIG.recycleOldest,
     dynamicBodyRadius: CONFIG.dynamicBodyRadius,
     spawnMode: CONFIG.spawnMode,
     spawnPoint: { ...CONFIG.spawnPoint },
+    ballColors: [...CONFIG.ballColors],
     showCameraFeed: CONFIG.showCameraFeed,
     showSurfaces: CONFIG.showSurfaces,
   };
@@ -48,7 +50,7 @@ function mergeIntoConfig(data) {
   const scalars = [
     'minContourArea', 'stabilizerTolerance', 'stabilizerFreezeFrames',
     'canvasWidth', 'canvasHeight',
-    'spawnInterval', 'maxDynamicBodies', 'autoSpawnEnabled', 'dynamicBodyRadius',
+    'spawnInterval', 'maxDynamicBodies', 'autoSpawnEnabled', 'recycleOldest', 'dynamicBodyRadius',
     'spawnMode',
     'showCameraFeed', 'showSurfaces'
   ];
@@ -63,6 +65,9 @@ function mergeIntoConfig(data) {
   }
   if (data.spawnPoint && typeof data.spawnPoint.x === 'number') {
     CONFIG.spawnPoint = { ...data.spawnPoint };
+  }
+  if (Array.isArray(data.ballColors) && data.ballColors.length > 0) {
+    CONFIG.ballColors = [...data.ballColors];
   }
 }
 

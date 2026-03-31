@@ -57,7 +57,8 @@ export function initPhysics(renderCanvas) {
 
 // ── Dynamic body helpers ──
 
-const PALETTE = ['#6cf', '#fc6', '#f66', '#6f6', '#c6f', '#ff6', '#6ff'];
+/** Fallback palette used when CONFIG.ballColors is empty. */
+const DEFAULT_PALETTE = ['#6cf', '#fc6', '#f66', '#6f6', '#c6f', '#ff6', '#6ff'];
 
 /**
  * Spawn a dynamic circle at (x, y).
@@ -78,7 +79,8 @@ export function spawnDynamicBody(world, x, y) {
     dynamicBodies.delete(oldest);
   }
   const r = CONFIG.dynamicBodyRadius;
-  const color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  const palette = (CONFIG.ballColors && CONFIG.ballColors.length > 0) ? CONFIG.ballColors : DEFAULT_PALETTE;
+  const color = palette[Math.floor(Math.random() * palette.length)];
   const body = Matter.Bodies.circle(x, y, r, {
     isStatic: false,
     restitution: 0.75,
