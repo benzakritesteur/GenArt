@@ -13,12 +13,14 @@
 
 /**
  * Global configuration object for GenArt real-time projection mapping system.
- * Color detection uses RGB color difference: a pixel is detected when each
- * channel's absolute difference from the target color is within the tolerance.
+ * Color detection uses HSV color space comparison (falls back to RGB if
+ * cv.cvtColor is unavailable). The tolerance value controls how far a pixel's
+ * color may deviate from the target; it is mapped to separate H/S/V ranges
+ * internally for robust detection under varying lighting.
  * @namespace
  */
 export const CONFIG = {
-  // ── Multi-color detection profiles (RGB difference) ──
+  // ── Multi-color detection profiles (HSV-based, tolerance 0-255) ──
   /** @type {ColorProfile[]} */
   colorProfiles: [
     { name: 'Yellow', targetColor: '#E2C829', tolerance: 70 },

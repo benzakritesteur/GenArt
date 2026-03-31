@@ -361,7 +361,7 @@ function mainLoop() {
 
     // 8. Debug overlay — always show detection rectangles; corner pin handles on D toggle
     debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-    drawDebugOverlay(debugCtx, stabilized, getDynamicBodyCount());
+    drawDebugOverlay(debugCtx, stabilized, getDynamicBodyCount(), bodyRegistry.size);
     if (showDebug && cornerPinDraw) cornerPinDraw();
 
     // 9. Periodic cleanup of dynamic bodies
@@ -613,7 +613,7 @@ function buildCalibrationUI() {
       const r = parseInt(hex.slice(1, 3), 16);
       const g = parseInt(hex.slice(3, 5), 16);
       const b = parseInt(hex.slice(5, 7), 16);
-      infoRow.textContent = `RGB(${r}, ${g}, ${b}) ± ${p.tolerance} per channel`;
+      infoRow.textContent = `RGB(${r}, ${g}, ${b}) | Tolerance ${p.tolerance} (HSV-based)`;
     }
     updateInfo();
     profileContainer.appendChild(infoRow);

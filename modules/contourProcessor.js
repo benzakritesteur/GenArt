@@ -1,11 +1,39 @@
 /**
  * Contour processing utilities for extracting bounding box and angle information from OpenCV contours.
- * Uses global `cv` object.
+ * Uses global `cv` object for minAreaRect only — corner points are computed in
+ * pure JavaScript to avoid fragile cv.boxPoints / Float32Array extraction.
  */
 
 /**
+ * Computes the 4 corner points of a rotated rectangle using trigonometry.
+ * Replaces cv.boxPoints — no OpenCV dependency, no Float32Array extraction.
+ *
+ * @param {number} cx - Center X.
+ * @param {number} cy - Center Y.
+ * @param {number} w  - Rectangle width  (as returned by cv.minAreaRect).
+ * @param {number} h  - Rectangle height (as returned by cv.minAreaRect).
+ * @param {number} angleDeg - Rotation angle in degrees (as returned by cv.minAreaRect).
+ * @returns {Array<{x: number, y: number}>} Four corner points in sequential order.
+ */
+function computeBoxCorners(cx, cy, w, h, angleDeg) {
+  const rad = angleDeg * Math.PI / 180;
+  const cosA = Math.cos(rad);
+  const sinA = Math.sin(rad);
+  const hw = w / 2;
+  const hh = h / 2;
+
+  // Local offsets rotated by angle, translated to world coordinates
+  return [
+    { x: cx + (-hw * cosA - (-hh) * sinA), y: cy + (-hw * sinA + (-hh) * cosA) },
+    { x: cx + ( hw * cosA - (-hh) * sinA), y: cy + ( hw * sinA + (-hh) * cosA) },
+    { x: cx + ( hw * cosA - ( hh) * sinA), y: cy + ( hw * sinA + ( hh) * cosA) },
+    { x: cx + (-hw * cosA - ( hh) * sinA), y: cy + (-hw * sinA + ( hh) * cosA) },
+  ];
+}
+
+/**
  * Processes an array of OpenCV contour Mats and extracts bounding box, center, size, angle, and corners.
- * Uses minAreaRect for accurate rotated rectangle parameters and boxPoints for corner positions.
+ * Uses minAreaRect for accurate rotated rectangle parameters and computes corner positions in JS.
  * Filters by aspect ratio to reject elongated non-rectangular blobs.
  *
  * @param {cv.Mat[]} contours - Array of OpenCV contour Mats.
@@ -25,6 +53,9 @@ export function processContours(contours) {
       // Skip degenerate rectangles (zero area)
       if (size.width < 1 || size.height < 1) continue;
 
+      // Compute corners from the ORIGINAL rotated rect (pure JS — always works)
+      const corners = computeBoxCorners(center.x, center.y, size.width, size.height, angle);
+
       // Normalize: ensure width >= height and adjust angle
       let w = size.width;
       let h = size.height;
@@ -39,33 +70,6 @@ export function processContours(contours) {
       // Aspect ratio filter — reject very elongated shapes (not post-its)
       const aspect = w / h;
       if (aspect > 8.0) continue;
-
-      // Get corners from the rotated rectangle (4 precise corner points)
-      const box = cv.boxPoints(rotatedRect);
-
-      // Robust float data extraction — data32F may not exist in all OpenCV.js builds
-      let floatData = box.data32F || box.data64F;
-      if (!floatData && box.data && box.data.buffer) {
-        // Fallback: interpret the raw Uint8Array as Float32 (boxPoints returns CV_32F)
-        try {
-          floatData = new Float32Array(box.data.buffer, box.data.byteOffset, 8);
-        } catch (_) { /* buffer access failed */ }
-      }
-
-      // Guard: ensure box has valid float data (4 corners × 2 coords = 8 values)
-      if (!floatData || floatData.length < 8) {
-        if (box && typeof box.delete === 'function') box.delete();
-        continue;
-      }
-
-      const corners = [];
-      for (let i = 0; i < 4; ++i) {
-        corners.push({
-          x: floatData[i * 2],
-          y: floatData[i * 2 + 1]
-        });
-      }
-      if (box && typeof box.delete === 'function') box.delete();
 
       results.push({
         center: { x: center.x, y: center.y },
@@ -88,22 +92,25 @@ export function processContours(contours) {
  *
  * @param {CanvasRenderingContext2D} ctx - Canvas 2D context to draw on.
  * @param {Array<{center: {x: number, y: number}, size: {width: number, height: number}, angle: number, corners: Array<{x: number, y: number}>, id?: number, displayColor?: string, profileName?: string}>} detectedObjects
- * @param {number} [bodyCount=0] - Number of active physics bodies (for diagnostic display).
+ * @param {number} [bodyCount=0] - Number of active dynamic bodies (for diagnostic display).
+ * @param {number} [staticBodyCount=0] - Number of active static physics bodies from detection.
  * @returns {void}
  */
-export function drawDebugOverlay(ctx, detectedObjects, bodyCount = 0) {
+export function drawDebugOverlay(ctx, detectedObjects, bodyCount = 0, staticBodyCount = 0) {
   ctx.save();
 
   // Diagnostic HUD
   ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.fillRect(8, 8, 280, 42);
+  ctx.fillRect(8, 8, 340, 42);
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillStyle = detectedObjects.length > 0 ? '#6f6' : '#f66';
   ctx.fillText(`Surfaces: ${detectedObjects.length}`, 14, 14);
+  ctx.fillStyle = staticBodyCount > 0 ? '#6f6' : '#fa0';
+  ctx.fillText(`Bodies: ${staticBodyCount}`, 140, 14);
   ctx.fillStyle = bodyCount > 0 ? '#6cf' : '#fa0';
-  ctx.fillText(`Balls: ${bodyCount}`, 150, 14);
+  ctx.fillText(`Balls: ${bodyCount}`, 250, 14);
   ctx.fillStyle = '#888';
   ctx.font = '11px monospace';
   ctx.fillText(detectedObjects.length === 0 ? 'Pick target color & adjust tolerance' : 'Surfaces detected ✓ — balls bounce on them', 14, 32);
