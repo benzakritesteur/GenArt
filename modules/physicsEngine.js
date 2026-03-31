@@ -67,7 +67,7 @@ const PALETTE = ['#6cf', '#fc6', '#f66', '#6f6', '#c6f', '#ff6', '#6ff'];
  */
 export function spawnDynamicBody(world, x, y) {
   if (dynamicBodies.size >= CONFIG.maxDynamicBodies) return;
-  const r = CONFIG.dynamicBodyRadius + Math.random() * 6;
+  const r = CONFIG.dynamicBodyRadius;
   const color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
   const body = Matter.Bodies.circle(x, y, r, {
     isStatic: false,
