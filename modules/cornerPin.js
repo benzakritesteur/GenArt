@@ -63,23 +63,23 @@ export function warpPoints(points, transformMat) {
  *
  * @param {HTMLCanvasElement} overlayCanvas - Canvas for drawing and interaction.
  * @param {(points: Array<{x: number, y: number}>) => void} onUpdate - Callback called with new corner points after drag.
+ * @param {{initialPoints?: Array<{x: number, y: number}>, handleColor?: string, lineColor?: string, label?: string}} [opts] - Options.
  * @returns {function(): void} draw - Call this each frame to redraw the corner pin handles.
- * @example
- * initCornerPinUI(canvas, (pts) => { ... });
  */
-export function initCornerPinUI(overlayCanvas, onUpdate) {
+export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
   const ctx = overlayCanvas.getContext('2d');
-  let points = CONFIG.cornerPin.map(p => ({ ...p }));
+  const handleColor = opts.handleColor || 'yellow';
+  const lineColor = opts.lineColor || '#ff0';
+  const label = opts.label || '';
+  let points = (opts.initialPoints || CONFIG.cornerPin).map(p => ({ ...p }));
   let draggingIdx = null;
   let dragOffset = { x: 0, y: 0 };
   const HANDLE_RADIUS = 8;
   const HIT_RADIUS = 15;
 
   function draw() {
-    // NOTE: Do NOT clearRect here — the main loop clears the debug canvas before redrawing.
-    // Draw quad lines
     ctx.save();
-    ctx.strokeStyle = '#ff0';
+    ctx.strokeStyle = lineColor;
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 4]);
     ctx.beginPath();
@@ -88,15 +88,21 @@ export function initCornerPinUI(overlayCanvas, onUpdate) {
     ctx.closePath();
     ctx.stroke();
     ctx.setLineDash([]);
-    // Draw handles
     for (let i = 0; i < 4; ++i) {
       ctx.beginPath();
       ctx.arc(points[i].x, points[i].y, HANDLE_RADIUS, 0, 2 * Math.PI);
-      ctx.fillStyle = 'yellow';
+      ctx.fillStyle = handleColor;
       ctx.fill();
       ctx.lineWidth = 3;
       ctx.strokeStyle = '#333';
       ctx.stroke();
+    }
+    if (label) {
+      ctx.fillStyle = handleColor;
+      ctx.font = 'bold 11px monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(label, points[0].x + 12, points[0].y + 2);
     }
     ctx.restore();
   }

@@ -40,9 +40,22 @@ export const CONFIG = {
   /** @type {number} */ canvasWidth: 1280,
   /** @type {number} */ canvasHeight: 720,
 
-  // ── Corner pin ──
+  // ── Corner pin (projector output warp) ──
   /** @type {Point[]} */
   cornerPin: [
+    { x: 0, y: 0 },
+    { x: 1280, y: 0 },
+    { x: 1280, y: 720 },
+    { x: 0, y: 720 }
+  ],
+
+  // ── Camera: ROI crop / digital zoom ──
+  /** @type {{x: number, y: number, w: number, h: number}} */
+  cameraROI: { x: 0, y: 0, w: 1280, h: 720 },
+
+  // ── Camera: perspective correction (input-side corner pin) ──
+  /** @type {Point[]} */
+  cameraCornerPin: [
     { x: 0, y: 0 },
     { x: 1280, y: 0 },
     { x: 1280, y: 720 },
@@ -54,6 +67,8 @@ export const CONFIG = {
   /** @type {number} */ maxDynamicBodies: 80,
   /** @type {boolean} */ autoSpawnEnabled: true,
   /** @type {number} */ dynamicBodyRadius: 12,
+  /** @type {string} */ spawnMode: 'random',  // 'random' | 'single'
+  /** @type {Point} */ spawnPoint: { x: 640, y: 10 },
 
   // ── Display ──
   /** @type {boolean} */ showCameraFeed: true,

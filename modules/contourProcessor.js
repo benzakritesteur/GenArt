@@ -119,20 +119,8 @@ export function drawDebugOverlay(ctx, detectedObjects, bodyCount = 0, staticBody
   for (const obj of detectedObjects) {
     const color = obj.displayColor || 'lime';
 
-    // Draw filled semi-transparent shape
-    ctx.fillStyle = color + '33';
-    ctx.strokeStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(obj.corners[0].x, obj.corners[0].y);
-    for (let i = 1; i < 4; ++i) {
-      ctx.lineTo(obj.corners[i].x, obj.corners[i].y);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // Draw center dot
-    ctx.fillStyle = 'red';
+    // Center dot (lightweight — the filled polygon is drawn by the afterRender overlay)
+    ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(obj.center.x, obj.center.y, 4, 0, 2 * Math.PI);
     ctx.fill();

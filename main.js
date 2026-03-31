@@ -5,7 +5,7 @@
 import { initCamera, captureFrame } from './modules/camera.js';
 import { detectColorMasks, findContours } from './modules/colorDetection.js';
 import { processContours, drawDebugOverlay } from './modules/contourProcessor.js';
-import { initCornerPinUI } from './modules/cornerPin.js';
+import { initCornerPinUI, buildPerspectiveTransform } from './modules/cornerPin.js';
 import { stabilizeObjects } from './modules/stabilizer.js';
 import { initPhysics, syncPhysicsBodies, spawnDynamicBody, cleanupDynamicBodies, getDynamicBodyCount } from './modules/physicsEngine.js';
 import { CONFIG } from './config.js';
@@ -26,6 +26,8 @@ let fpsTick = null;
 let spawnTimerId = null;
 
 let cornerPinDraw = null;
+let cameraPinDraw = null;
+let showCameraPin = false;
 let opencvReady = false;
 let activeProfileIdx = 0;
 let cameraPreviewCanvas = null;
@@ -79,6 +81,9 @@ async function init() {
 
   // 1. Init camera FIRST — no OpenCV needed, user sees feed immediately
   await initCamera(video);
+
+  // Apply saved camera feed visibility
+  if (!CONFIG.showCameraFeed) video.style.display = 'none';
 
   // Canvas internal resolution — set BEFORE physics init so all contexts start at correct size
   [captureCanvas, debugCanvas, physicsCanvas].forEach(c => {
@@ -165,6 +170,18 @@ async function init() {
     if (e.key === 'd' || e.key === 'D') {
       showDebug = !showDebug;
     }
+    // C = toggle camera corner pin handles (perspective correction for input)
+    if (e.key === 'c' || e.key === 'C') {
+      showCameraPin = !showCameraPin;
+      console.log(`[camera] Corner pin handles ${showCameraPin ? 'ON — drag cyan handles' : 'OFF'}`);
+    }
+    // V = toggle camera feed visibility
+    if (e.key === 'v' || e.key === 'V') {
+      CONFIG.showCameraFeed = !CONFIG.showCameraFeed;
+      video.style.display = CONFIG.showCameraFeed ? '' : 'none';
+      debouncedSave();
+      console.log(`[display] Camera feed ${CONFIG.showCameraFeed ? 'ON' : 'OFF'}`);
+    }
     // T = spawn a test static body in the middle (to verify physics works)
     if (e.key === 't' || e.key === 'T') {
       const testBody = Matter.Bodies.rectangle(
@@ -213,11 +230,19 @@ async function init() {
     return; // keep running without detection
   }
 
-  // 4. OpenCV-dependent setup: corner pin UI (for future projection mapping)
+  // 4. OpenCV-dependent setup: corner pin UIs
+  // Projector output warp (yellow handles — toggle with D key)
   cornerPinDraw = initCornerPinUI(debugCanvas, newCorners => {
     CONFIG.cornerPin = newCorners.map(p => ({ ...p }));
+    if (window._syncProjectionWarp) window._syncProjectionWarp();
     debouncedSave();
-  });
+  }, { initialPoints: CONFIG.cornerPin, handleColor: 'yellow', lineColor: '#ff0', label: 'Projector' });
+
+  // Camera input perspective correction (cyan handles — toggle with C key)
+  cameraPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+    CONFIG.cameraCornerPin = newCorners.map(p => ({ ...p }));
+    debouncedSave();
+  }, { initialPoints: CONFIG.cameraCornerPin, handleColor: 'cyan', lineColor: '#0ff', label: 'Camera' });
 
   opencvReady = true;
   console.log('[init] OpenCV ready — detection pipeline active');
@@ -228,8 +253,9 @@ function startAutoSpawn() {
   stopAutoSpawn();
   if (CONFIG.autoSpawnEnabled && physics) {
     spawnTimerId = setInterval(() => {
-      const x = Math.random() * CONFIG.canvasWidth;
-      spawnDynamicBody(physics.world, x, 10);
+      const x = CONFIG.spawnMode === 'single' ? CONFIG.spawnPoint.x : Math.random() * CONFIG.canvasWidth;
+      const y = CONFIG.spawnMode === 'single' ? CONFIG.spawnPoint.y : 10;
+      spawnDynamicBody(physics.world, x, y);
     }, CONFIG.spawnInterval);
   }
 }
@@ -248,6 +274,21 @@ function mainLoop() {
   // Update camera preview (always, even without OpenCV)
   if (cameraPreviewCtx && video.readyState >= 2) {
     cameraPreviewCtx.drawImage(video, 0, 0, cameraPreviewCanvas.width, cameraPreviewCanvas.height);
+    // Draw ROI rectangle on preview if not full-frame
+    const roi = CONFIG.cameraROI;
+    if (roi.x > 0 || roi.y > 0 || roi.w < CONFIG.canvasWidth || roi.h < CONFIG.canvasHeight) {
+      const sx = (roi.x / CONFIG.canvasWidth) * cameraPreviewCanvas.width;
+      const sy = (roi.y / CONFIG.canvasHeight) * cameraPreviewCanvas.height;
+      const sw = (roi.w / CONFIG.canvasWidth) * cameraPreviewCanvas.width;
+      const sh = (roi.h / CONFIG.canvasHeight) * cameraPreviewCanvas.height;
+      cameraPreviewCtx.save();
+      cameraPreviewCtx.strokeStyle = '#0f0';
+      cameraPreviewCtx.lineWidth = 2;
+      cameraPreviewCtx.setLineDash([4, 3]);
+      cameraPreviewCtx.strokeRect(sx, sy, sw, sh);
+      cameraPreviewCtx.setLineDash([]);
+      cameraPreviewCtx.restore();
+    }
   }
 
   // Skip detection if video or OpenCV isn't ready yet
@@ -255,16 +296,46 @@ function mainLoop() {
     // Still draw debug overlay (corner pin handles)
     debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
     if (showDebug && cornerPinDraw) cornerPinDraw();
+    if (showCameraPin && cameraPinDraw) cameraPinDraw();
     requestAnimationFrame(mainLoop);
     return;
   }
 
-  // 1. Capture frame
-  captureFrame(video, captureCanvas, captureCanvas.getContext('2d'));
+  // 1. Capture frame (with ROI crop / digital zoom)
+  captureFrame(video, captureCanvas, captureCanvas.getContext('2d'), CONFIG.cameraROI);
 
   let src = null;
   try {
     src = cv.imread(captureCanvas);
+
+    // 1b. Camera perspective correction (input-side warp)
+    const camPin = CONFIG.cameraCornerPin;
+    const isDefaultCamPin = camPin[0].x === 0 && camPin[0].y === 0 &&
+      camPin[1].x === CONFIG.canvasWidth && camPin[1].y === 0 &&
+      camPin[2].x === CONFIG.canvasWidth && camPin[2].y === CONFIG.canvasHeight &&
+      camPin[3].x === 0 && camPin[3].y === CONFIG.canvasHeight;
+    if (!isDefaultCamPin) {
+      let transformMat = null;
+      let warped = null;
+      try {
+        const dstPts = [
+          { x: 0, y: 0 }, { x: CONFIG.canvasWidth, y: 0 },
+          { x: CONFIG.canvasWidth, y: CONFIG.canvasHeight }, { x: 0, y: CONFIG.canvasHeight }
+        ];
+        transformMat = buildPerspectiveTransform(camPin, dstPts);
+        warped = new cv.Mat();
+        const dsize = new cv.Size(CONFIG.canvasWidth, CONFIG.canvasHeight);
+        cv.warpPerspective(src, warped, transformMat, dsize);
+        src.delete();
+        src = warped;
+        warped = null; // ownership transferred
+      } catch (warpErr) {
+        console.warn('[mainLoop] Camera perspective warp failed:', warpErr);
+        if (warped) warped.delete();
+      } finally {
+        if (transformMat) transformMat.delete();
+      }
+    }
 
     // 2. Detect masks for all color profiles
     const masksInfo = detectColorMasks(src, CONFIG.colorProfiles);
@@ -330,9 +401,12 @@ function mainLoop() {
     // 5. Stabilize
     const stabilized = stabilizeObjects(allDetections);
 
-    // Propagate display info from detections to stabilized (by matching id)
+    // Propagate display info from detections to stabilized (by matching id).
+    // Only objects with a current-frame detection get displayColor — ghost
+    // objects (persisted by freeze-frames but not detected this frame) are
+    // excluded from physics and rendering to avoid stale colliders.
+    const activeSurfaces = [];
     for (const s of stabilized) {
-      // Find closest detection to keep displayColor
       let best = null, bestDist = Infinity;
       for (const d of allDetections) {
         const dx = d.center.x - s.center.x, dy = d.center.y - s.center.y;
@@ -342,14 +416,15 @@ function mainLoop() {
       if (best) {
         s.displayColor = best.displayColor;
         s.profileName = best.profileName;
+        activeSurfaces.push(s);
       }
     }
 
-    // 6. Sync physics — create/update static bodies from stabilized post-its
-    syncPhysicsBodies(physics.world, stabilized, bodyRegistry);
+    // 6. Sync physics — only actively-detected surfaces get colliders
+    syncPhysicsBodies(physics.world, activeSurfaces, bodyRegistry);
 
-    // 7. Store surfaces for the afterRender overlay drawing
-    currentSurfaces = stabilized;
+    // 7. Store active surfaces for the afterRender overlay drawing
+    currentSurfaces = activeSurfaces;
 
     // ── Diagnostic logging (throttled: every ~2s at 60fps) ──
     if (cleanupCounter % 120 === 0) {
@@ -359,10 +434,28 @@ function mainLoop() {
       console.log(`[detection] ${profileSummary} → raw=${allDetections.length} stabilized=${stabilized.length} bodies=${bodyRegistry.size}`);
     }
 
-    // 8. Debug overlay — always show detection rectangles; corner pin handles on D toggle
+    // 8. Debug overlay — HUD + labels; corner pin handles on D toggle
     debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-    drawDebugOverlay(debugCtx, stabilized, getDynamicBodyCount(), bodyRegistry.size);
+    drawDebugOverlay(debugCtx, activeSurfaces, getDynamicBodyCount(), bodyRegistry.size);
     if (showDebug && cornerPinDraw) cornerPinDraw();
+    if (showCameraPin && cameraPinDraw) cameraPinDraw();
+
+    // Draw spawn point marker when in single mode
+    if (CONFIG.spawnMode === 'single') {
+      debugCtx.save();
+      debugCtx.fillStyle = '#f06';
+      debugCtx.strokeStyle = '#fff';
+      debugCtx.lineWidth = 2;
+      debugCtx.beginPath();
+      debugCtx.arc(CONFIG.spawnPoint.x, CONFIG.spawnPoint.y, 8, 0, 2 * Math.PI);
+      debugCtx.fill();
+      debugCtx.stroke();
+      debugCtx.fillStyle = '#fff';
+      debugCtx.font = 'bold 10px monospace';
+      debugCtx.textAlign = 'center';
+      debugCtx.fillText('DROP', CONFIG.spawnPoint.x, CONFIG.spawnPoint.y + 20);
+      debugCtx.restore();
+    }
 
     // 9. Periodic cleanup of dynamic bodies
     if (++cleanupCounter % 60 === 0) {
@@ -499,10 +592,14 @@ function buildCalibrationUI() {
   feedRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
   const feedCheck = document.createElement('input');
   feedCheck.type = 'checkbox'; feedCheck.checked = CONFIG.showCameraFeed;
-  feedCheck.onchange = () => { CONFIG.showCameraFeed = feedCheck.checked; debouncedSave(); };
+  feedCheck.onchange = () => {
+    CONFIG.showCameraFeed = feedCheck.checked;
+    video.style.display = CONFIG.showCameraFeed ? '' : 'none';
+    debouncedSave();
+  };
   feedRow.appendChild(feedCheck);
   const feedLbl = document.createElement('span');
-  feedLbl.textContent = 'Show camera feed (uncheck for projection)';
+  feedLbl.textContent = 'Show camera feed (V key)';
   feedLbl.style.fontSize = '11px';
   feedRow.appendChild(feedLbl);
   previewSection.appendChild(feedRow);
@@ -653,6 +750,51 @@ function buildCalibrationUI() {
   // ── Separator ──
   panel.appendChild(Object.assign(document.createElement('hr'), { style: { border: '0', borderTop: '1px solid #444', margin: '10px 0' } }));
 
+  // ── Camera controls ──
+  const camTitle = document.createElement('div');
+  camTitle.textContent = '📷 Camera Controls';
+  camTitle.style.cssText = 'font-weight:bold;margin-bottom:6px;';
+  panel.appendChild(camTitle);
+
+  // Camera perspective toggle hint
+  const camPinHint = document.createElement('div');
+  camPinHint.style.cssText = 'font-size:10px;color:#0ff;margin-bottom:6px;';
+  camPinHint.textContent = 'Press C to show/hide camera correction handles (cyan)';
+  panel.appendChild(camPinHint);
+
+  // ROI sliders
+  const roiLabel = document.createElement('div');
+  roiLabel.textContent = 'Region of Interest (crop / zoom)';
+  roiLabel.style.cssText = 'font-size:11px;color:#aaa;margin-bottom:4px;';
+  panel.appendChild(roiLabel);
+
+  addSliderRow(panel, 'ROI X', CONFIG.cameraROI.x, 0, CONFIG.canvasWidth - 100, 10, v => {
+    CONFIG.cameraROI.x = v; debouncedSave();
+  });
+  addSliderRow(panel, 'ROI Y', CONFIG.cameraROI.y, 0, CONFIG.canvasHeight - 100, 10, v => {
+    CONFIG.cameraROI.y = v; debouncedSave();
+  });
+  addSliderRow(panel, 'ROI W', CONFIG.cameraROI.w, 100, CONFIG.canvasWidth, 10, v => {
+    CONFIG.cameraROI.w = v; debouncedSave();
+  });
+  addSliderRow(panel, 'ROI H', CONFIG.cameraROI.h, 100, CONFIG.canvasHeight, 10, v => {
+    CONFIG.cameraROI.h = v; debouncedSave();
+  });
+
+  const roiResetBtn = document.createElement('button');
+  roiResetBtn.textContent = 'Reset ROI';
+  roiResetBtn.style.cssText = 'padding:3px 8px;border:1px solid #888;border-radius:4px;color:#aaa;background:transparent;cursor:pointer;font:10px monospace;margin-bottom:4px;';
+  roiResetBtn.onclick = () => {
+    CONFIG.cameraROI = { x: 0, y: 0, w: CONFIG.canvasWidth, h: CONFIG.canvasHeight };
+    debouncedSave();
+    buildCalibrationUI(); // refresh sliders
+    flash('ROI reset');
+  };
+  panel.appendChild(roiResetBtn);
+
+  // ── Separator ──
+  panel.appendChild(Object.assign(document.createElement('hr'), { style: { border: '0', borderTop: '1px solid #444', margin: '10px 0' } }));
+
   // ── Physics controls ──
   const physTitle = document.createElement('div');
   physTitle.textContent = '⚙ Physics';
@@ -675,6 +817,38 @@ function buildCalibrationUI() {
   spawnLbl.style.fontSize = '12px';
   spawnRow.appendChild(spawnLbl);
   panel.appendChild(spawnRow);
+
+  // Spawn mode toggle (random / single drop point)
+  const modeRow = document.createElement('div');
+  modeRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:11px;';
+  modeRow.textContent = 'Drop: ';
+  for (const mode of ['random', 'single']) {
+    const rb = document.createElement('input');
+    rb.type = 'radio'; rb.name = 'spawnMode'; rb.value = mode;
+    rb.checked = CONFIG.spawnMode === mode;
+    rb.onchange = () => { CONFIG.spawnMode = mode; startAutoSpawn(); debouncedSave(); };
+    const lb = document.createElement('label');
+    lb.style.cssText = 'cursor:pointer;margin-right:4px;';
+    lb.appendChild(rb);
+    lb.append(mode === 'random' ? ' Random' : ' Single point');
+    modeRow.appendChild(lb);
+  }
+  panel.appendChild(modeRow);
+
+  // Single drop point sliders (visible when single mode)
+  const spawnPtContainer = document.createElement('div');
+  spawnPtContainer.style.cssText = CONFIG.spawnMode === 'single' ? '' : 'display:none;';
+  addSliderRow(spawnPtContainer, 'Drop X', CONFIG.spawnPoint.x, 0, CONFIG.canvasWidth, 5, v => {
+    CONFIG.spawnPoint.x = v; debouncedSave();
+  });
+  addSliderRow(spawnPtContainer, 'Drop Y', CONFIG.spawnPoint.y, 0, CONFIG.canvasHeight, 5, v => {
+    CONFIG.spawnPoint.y = v; debouncedSave();
+  });
+  panel.appendChild(spawnPtContainer);
+  // Show/hide drop point sliders on mode change
+  modeRow.addEventListener('change', () => {
+    spawnPtContainer.style.display = CONFIG.spawnMode === 'single' ? '' : 'none';
+  });
 
   // Spawn interval slider
   addSliderRow(panel, 'Interval (ms)', CONFIG.spawnInterval, 100, 3000, 100, v => {
