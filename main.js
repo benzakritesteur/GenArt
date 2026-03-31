@@ -182,6 +182,11 @@ async function init() {
       debouncedSave();
       console.log(`[display] Camera feed ${CONFIG.showCameraFeed ? 'ON' : 'OFF'}`);
     }
+    // H = toggle the control panel
+    if (e.key === 'h' || e.key === 'H') {
+      const p = document.getElementById('calibrationPanel');
+      if (p) p.style.display = p.style.display === 'none' ? '' : 'none';
+    }
     // T = spawn a test static body in the middle (to verify physics works)
     if (e.key === 't' || e.key === 'T') {
       const testBody = Matter.Bodies.rectangle(
@@ -491,8 +496,8 @@ function buildCalibrationUI() {
 
   // ── Title ──
   const title = document.createElement('div');
-  title.textContent = '🎨 GenArt Controls';
-  title.style.cssText = 'font-weight:bold;font-size:15px;margin-bottom:10px;text-align:center;';
+  title.textContent = '🎨 GenArt Controls (H to hide)';
+  title.style.cssText = 'font-weight:bold;font-size:14px;margin-bottom:10px;text-align:center;';
   panel.appendChild(title);
 
   // ── Camera & Detection Preview ──
