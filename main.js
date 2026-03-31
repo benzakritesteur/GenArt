@@ -764,24 +764,111 @@ function buildCalibrationUI() {
   camPinRow.appendChild(camPinLbl);
   panel.appendChild(camPinRow);
 
+  // Camera corner pin coordinate fields
+  const camPinFields = addCornerPinFields(panel, CONFIG.cameraCornerPin, '#0ff', () => {
+    debouncedSave();
+    cameraPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+      CONFIG.cameraCornerPin = newCorners.map(p => ({ ...p }));
+      camPinFields.refresh();
+      debouncedSave();
+    }, { initialPoints: CONFIG.cameraCornerPin, handleColor: 'cyan', lineColor: '#0ff', label: 'Camera' });
+  });
+
+  // Re-init camera pin draw so drag callbacks refresh the fields
+  cameraPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+    CONFIG.cameraCornerPin = newCorners.map(p => ({ ...p }));
+    camPinFields.refresh();
+    debouncedSave();
+  }, { initialPoints: CONFIG.cameraCornerPin, handleColor: 'cyan', lineColor: '#0ff', label: 'Camera' });
+
   // Reset camera corner pin
   const camResetBtn = document.createElement('button');
   camResetBtn.textContent = 'Reset Camera Framing';
-  camResetBtn.style.cssText = 'padding:3px 8px;border:1px solid #0ff;border-radius:4px;color:#0ff;background:transparent;cursor:pointer;font:10px monospace;margin-bottom:4px;';
+  camResetBtn.style.cssText = 'padding:3px 8px;border:1px solid #0ff;border-radius:4px;color:#0ff;background:transparent;cursor:pointer;font:10px monospace;margin:4px 0;';
   camResetBtn.onclick = () => {
     CONFIG.cameraCornerPin = [
       { x: 0, y: 0 }, { x: CONFIG.canvasWidth, y: 0 },
       { x: CONFIG.canvasWidth, y: CONFIG.canvasHeight }, { x: 0, y: CONFIG.canvasHeight }
     ];
+    camPinFields.refresh();
     debouncedSave();
-    // Re-init the camera pin UI with the reset points
     cameraPinDraw = initCornerPinUI(debugCanvas, newCorners => {
       CONFIG.cameraCornerPin = newCorners.map(p => ({ ...p }));
+      camPinFields.refresh();
       debouncedSave();
     }, { initialPoints: CONFIG.cameraCornerPin, handleColor: 'cyan', lineColor: '#0ff', label: 'Camera' });
     flash('Camera framing reset');
   };
   panel.appendChild(camResetBtn);
+
+  // ── Separator ──
+  panel.appendChild(Object.assign(document.createElement('hr'), { style: { border: '0', borderTop: '1px solid #444', margin: '10px 0' } }));
+
+  // ── Projector corner pin ──
+  const projTitle = document.createElement('div');
+  projTitle.textContent = '🎥 Projector Framing';
+  projTitle.style.cssText = 'font-weight:bold;margin-bottom:6px;';
+  panel.appendChild(projTitle);
+
+  const projDesc = document.createElement('div');
+  projDesc.style.cssText = 'font-size:10px;color:#aaa;margin-bottom:6px;line-height:1.4;';
+  projDesc.textContent = 'Adjust output corners for keystoning correction when the projector is at an angle. Drag yellow handles (D key) or type coordinates.';
+  panel.appendChild(projDesc);
+
+  // Show / hide projector corner pin handles
+  const projPinRow = document.createElement('div');
+  projPinRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+  const projPinCheck = document.createElement('input');
+  projPinCheck.type = 'checkbox'; projPinCheck.checked = showDebug;
+  projPinCheck.onchange = () => { showDebug = projPinCheck.checked; };
+  projPinRow.appendChild(projPinCheck);
+  const projPinLbl = document.createElement('span');
+  projPinLbl.textContent = 'Show projector handles (D key)';
+  projPinLbl.style.cssText = 'font-size:11px;color:#ff0;';
+  projPinRow.appendChild(projPinLbl);
+  panel.appendChild(projPinRow);
+
+  // Projector corner pin coordinate fields
+  const projPinFields = addCornerPinFields(panel, CONFIG.cornerPin, '#ff0', () => {
+    if (window._syncProjectionWarp) window._syncProjectionWarp();
+    debouncedSave();
+    cornerPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+      CONFIG.cornerPin = newCorners.map(p => ({ ...p }));
+      projPinFields.refresh();
+      if (window._syncProjectionWarp) window._syncProjectionWarp();
+      debouncedSave();
+    }, { initialPoints: CONFIG.cornerPin, handleColor: 'yellow', lineColor: '#ff0', label: 'Projector' });
+  });
+
+  // Re-init projector pin draw so drag callbacks refresh the fields
+  cornerPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+    CONFIG.cornerPin = newCorners.map(p => ({ ...p }));
+    projPinFields.refresh();
+    if (window._syncProjectionWarp) window._syncProjectionWarp();
+    debouncedSave();
+  }, { initialPoints: CONFIG.cornerPin, handleColor: 'yellow', lineColor: '#ff0', label: 'Projector' });
+
+  // Reset projector corner pin
+  const projResetBtn = document.createElement('button');
+  projResetBtn.textContent = 'Reset Projector Framing';
+  projResetBtn.style.cssText = 'padding:3px 8px;border:1px solid #ff0;border-radius:4px;color:#ff0;background:transparent;cursor:pointer;font:10px monospace;margin:4px 0;';
+  projResetBtn.onclick = () => {
+    CONFIG.cornerPin = [
+      { x: 0, y: 0 }, { x: CONFIG.canvasWidth, y: 0 },
+      { x: CONFIG.canvasWidth, y: CONFIG.canvasHeight }, { x: 0, y: CONFIG.canvasHeight }
+    ];
+    projPinFields.refresh();
+    if (window._syncProjectionWarp) window._syncProjectionWarp();
+    debouncedSave();
+    cornerPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+      CONFIG.cornerPin = newCorners.map(p => ({ ...p }));
+      projPinFields.refresh();
+      if (window._syncProjectionWarp) window._syncProjectionWarp();
+      debouncedSave();
+    }, { initialPoints: CONFIG.cornerPin, handleColor: 'yellow', lineColor: '#ff0', label: 'Projector' });
+    flash('Projector framing reset');
+  };
+  panel.appendChild(projResetBtn);
 
   // ── Separator ──
   panel.appendChild(Object.assign(document.createElement('hr'), { style: { border: '0', borderTop: '1px solid #444', margin: '10px 0' } }));
@@ -958,6 +1045,66 @@ function addSliderRow(parent, label, value, min, max, step, onChange) {
   input.oninput = () => { val.textContent = input.value; onChange(Number(input.value)); };
   row.appendChild(lbl); row.appendChild(input); row.appendChild(val);
   parent.appendChild(row);
+}
+
+/**
+ * Helper: add 4 rows of X/Y number inputs for a corner pin array.
+ * Returns a refresh() function to sync the fields when the drag handles move.
+ *
+ * @param {HTMLElement} parent - Container to append rows to.
+ * @param {Array<{x: number, y: number}>} points - The 4-point array in CONFIG to read/write.
+ * @param {string} accentColor - Accent color for labels.
+ * @param {() => void} onChanged - Called after any field edit (should save + re-init handles).
+ * @returns {{ refresh: () => void }} Call refresh() when drag handles update the points externally.
+ */
+function addCornerPinFields(parent, points, accentColor, onChanged) {
+  const cornerNames = ['Top-Left', 'Top-Right', 'Bot-Right', 'Bot-Left'];
+  const inputs = [];
+
+  for (let i = 0; i < 4; i++) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:4px;margin:2px 0;';
+
+    const lbl = document.createElement('span');
+    lbl.textContent = `${i + 1} ${cornerNames[i]}`;
+    lbl.style.cssText = `width:80px;font-size:10px;color:${accentColor};`;
+    row.appendChild(lbl);
+
+    const xInput = document.createElement('input');
+    xInput.type = 'number'; xInput.step = '1';
+    xInput.value = Math.round(points[i].x);
+    xInput.style.cssText = 'width:52px;background:#222;border:1px solid #555;color:#fff;padding:2px 4px;border-radius:3px;font:11px monospace;';
+    xInput.title = 'X';
+    row.appendChild(xInput);
+
+    const yInput = document.createElement('input');
+    yInput.type = 'number'; yInput.step = '1';
+    yInput.value = Math.round(points[i].y);
+    yInput.style.cssText = 'width:52px;background:#222;border:1px solid #555;color:#fff;padding:2px 4px;border-radius:3px;font:11px monospace;';
+    yInput.title = 'Y';
+    row.appendChild(yInput);
+
+    const idx = i;
+    function commitField() {
+      points[idx].x = Number(xInput.value) || 0;
+      points[idx].y = Number(yInput.value) || 0;
+      onChanged();
+    }
+    xInput.onchange = commitField;
+    yInput.onchange = commitField;
+
+    inputs.push({ xInput, yInput });
+    parent.appendChild(row);
+  }
+
+  return {
+    refresh() {
+      for (let i = 0; i < 4; i++) {
+        inputs[i].xInput.value = Math.round(points[i].x);
+        inputs[i].yInput.value = Math.round(points[i].y);
+      }
+    }
+  };
 }
 
 // Build initial UI
