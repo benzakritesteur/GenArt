@@ -221,15 +221,17 @@ async function init() {
 
   // 3. Init corner pin UIs — no OpenCV needed, available immediately
   // Projector output warp (yellow handles — toggle with D key)
-  cornerPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+  replaceCornerPinDraw(debugCanvas, newCorners => {
     CONFIG.cornerPin = newCorners.map(p => ({ ...p }));
     if (window._syncProjectionWarp) window._syncProjectionWarp();
+    console.log('[cornerPin] Projector corners updated', newCorners.map(p => `(${Math.round(p.x)},${Math.round(p.y)})`).join(' '));
     debouncedSave();
   }, { initialPoints: CONFIG.cornerPin, handleColor: 'yellow', lineColor: '#ff0', label: 'Projector' });
 
   // Camera input perspective correction (cyan handles — toggle with C key)
-  cameraPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+  replaceCameraPinDraw(debugCanvas, newCorners => {
     CONFIG.cameraCornerPin = newCorners.map(p => ({ ...p }));
+    console.log('[cornerPin] Camera corners updated', newCorners.map(p => `(${Math.round(p.x)},${Math.round(p.y)})`).join(' '));
     debouncedSave();
   }, { initialPoints: CONFIG.cameraCornerPin, handleColor: 'cyan', lineColor: '#0ff', label: 'Camera' });
 
@@ -473,6 +475,21 @@ let saveTimer = null;
 function debouncedSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => saveCalibration(), 500);
+}
+
+/**
+ * Destroy old corner pin instance (if any) and create a new one.
+ * Prevents event listener accumulation when re-initializing.
+ */
+function replaceCornerPinDraw(...args) {
+  if (cornerPinDraw && cornerPinDraw.destroy) cornerPinDraw.destroy();
+  cornerPinDraw = initCornerPinUI(...args);
+  return cornerPinDraw;
+}
+function replaceCameraPinDraw(...args) {
+  if (cameraPinDraw && cameraPinDraw.destroy) cameraPinDraw.destroy();
+  cameraPinDraw = initCornerPinUI(...args);
+  return cameraPinDraw;
 }
 
 // ═════════════════════════════════════════════
@@ -765,19 +782,21 @@ function buildCalibrationUI() {
   panel.appendChild(camPinRow);
 
   // Camera corner pin coordinate fields
-  const camPinFields = addCornerPinFields(panel, CONFIG.cameraCornerPin, '#0ff', () => {
+  const camPinFields = addCornerPinFields(panel, () => CONFIG.cameraCornerPin, '#0ff', () => {
     debouncedSave();
-    cameraPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+    replaceCameraPinDraw(debugCanvas, newCorners => {
       CONFIG.cameraCornerPin = newCorners.map(p => ({ ...p }));
       camPinFields.refresh();
+      console.log('[cornerPin] Camera corners updated', newCorners.map(p => `(${Math.round(p.x)},${Math.round(p.y)})`).join(' '));
       debouncedSave();
     }, { initialPoints: CONFIG.cameraCornerPin, handleColor: 'cyan', lineColor: '#0ff', label: 'Camera' });
   });
 
   // Re-init camera pin draw so drag callbacks refresh the fields
-  cameraPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+  replaceCameraPinDraw(debugCanvas, newCorners => {
     CONFIG.cameraCornerPin = newCorners.map(p => ({ ...p }));
     camPinFields.refresh();
+    console.log('[cornerPin] Camera corners updated', newCorners.map(p => `(${Math.round(p.x)},${Math.round(p.y)})`).join(' '));
     debouncedSave();
   }, { initialPoints: CONFIG.cameraCornerPin, handleColor: 'cyan', lineColor: '#0ff', label: 'Camera' });
 
@@ -792,9 +811,10 @@ function buildCalibrationUI() {
     ];
     camPinFields.refresh();
     debouncedSave();
-    cameraPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+    replaceCameraPinDraw(debugCanvas, newCorners => {
       CONFIG.cameraCornerPin = newCorners.map(p => ({ ...p }));
       camPinFields.refresh();
+      console.log('[cornerPin] Camera corners updated', newCorners.map(p => `(${Math.round(p.x)},${Math.round(p.y)})`).join(' '));
       debouncedSave();
     }, { initialPoints: CONFIG.cameraCornerPin, handleColor: 'cyan', lineColor: '#0ff', label: 'Camera' });
     flash('Camera framing reset');
@@ -829,22 +849,24 @@ function buildCalibrationUI() {
   panel.appendChild(projPinRow);
 
   // Projector corner pin coordinate fields
-  const projPinFields = addCornerPinFields(panel, CONFIG.cornerPin, '#ff0', () => {
+  const projPinFields = addCornerPinFields(panel, () => CONFIG.cornerPin, '#ff0', () => {
     if (window._syncProjectionWarp) window._syncProjectionWarp();
     debouncedSave();
-    cornerPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+    replaceCornerPinDraw(debugCanvas, newCorners => {
       CONFIG.cornerPin = newCorners.map(p => ({ ...p }));
       projPinFields.refresh();
       if (window._syncProjectionWarp) window._syncProjectionWarp();
+      console.log('[cornerPin] Projector corners updated', newCorners.map(p => `(${Math.round(p.x)},${Math.round(p.y)})`).join(' '));
       debouncedSave();
     }, { initialPoints: CONFIG.cornerPin, handleColor: 'yellow', lineColor: '#ff0', label: 'Projector' });
   });
 
   // Re-init projector pin draw so drag callbacks refresh the fields
-  cornerPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+  replaceCornerPinDraw(debugCanvas, newCorners => {
     CONFIG.cornerPin = newCorners.map(p => ({ ...p }));
     projPinFields.refresh();
     if (window._syncProjectionWarp) window._syncProjectionWarp();
+    console.log('[cornerPin] Projector corners updated', newCorners.map(p => `(${Math.round(p.x)},${Math.round(p.y)})`).join(' '));
     debouncedSave();
   }, { initialPoints: CONFIG.cornerPin, handleColor: 'yellow', lineColor: '#ff0', label: 'Projector' });
 
@@ -860,10 +882,11 @@ function buildCalibrationUI() {
     projPinFields.refresh();
     if (window._syncProjectionWarp) window._syncProjectionWarp();
     debouncedSave();
-    cornerPinDraw = initCornerPinUI(debugCanvas, newCorners => {
+    replaceCornerPinDraw(debugCanvas, newCorners => {
       CONFIG.cornerPin = newCorners.map(p => ({ ...p }));
       projPinFields.refresh();
       if (window._syncProjectionWarp) window._syncProjectionWarp();
+      console.log('[cornerPin] Projector corners updated', newCorners.map(p => `(${Math.round(p.x)},${Math.round(p.y)})`).join(' '));
       debouncedSave();
     }, { initialPoints: CONFIG.cornerPin, handleColor: 'yellow', lineColor: '#ff0', label: 'Projector' });
     flash('Projector framing reset');
@@ -1052,14 +1075,15 @@ function addSliderRow(parent, label, value, min, max, step, onChange) {
  * Returns a refresh() function to sync the fields when the drag handles move.
  *
  * @param {HTMLElement} parent - Container to append rows to.
- * @param {Array<{x: number, y: number}>} points - The 4-point array in CONFIG to read/write.
+ * @param {() => Array<{x: number, y: number}>} getPoints - Getter returning the current 4-point array from CONFIG.
  * @param {string} accentColor - Accent color for labels.
  * @param {() => void} onChanged - Called after any field edit (should save + re-init handles).
  * @returns {{ refresh: () => void }} Call refresh() when drag handles update the points externally.
  */
-function addCornerPinFields(parent, points, accentColor, onChanged) {
+function addCornerPinFields(parent, getPoints, accentColor, onChanged) {
   const cornerNames = ['Top-Left', 'Top-Right', 'Bot-Right', 'Bot-Left'];
   const inputs = [];
+  const points = getPoints();
 
   for (let i = 0; i < 4; i++) {
     const row = document.createElement('div');
@@ -1086,8 +1110,9 @@ function addCornerPinFields(parent, points, accentColor, onChanged) {
 
     const idx = i;
     function commitField() {
-      points[idx].x = Number(xInput.value) || 0;
-      points[idx].y = Number(yInput.value) || 0;
+      const pts = getPoints();
+      pts[idx].x = Number(xInput.value) || 0;
+      pts[idx].y = Number(yInput.value) || 0;
       onChanged();
     }
     xInput.onchange = commitField;
@@ -1099,9 +1124,10 @@ function addCornerPinFields(parent, points, accentColor, onChanged) {
 
   return {
     refresh() {
+      const pts = getPoints();
       for (let i = 0; i < 4; i++) {
-        inputs[i].xInput.value = Math.round(points[i].x);
-        inputs[i].yInput.value = Math.round(points[i].y);
+        inputs[i].xInput.value = Math.round(pts[i].x);
+        inputs[i].yInput.value = Math.round(pts[i].y);
       }
     }
   };

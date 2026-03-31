@@ -189,7 +189,7 @@ export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
     const t = e.touches[0] || e.changedTouches[0];
     return canvasCoords(t.clientX, t.clientY);
   }
-  overlayCanvas.addEventListener('touchstart', e => {
+  function onTouchStart(e) {
     const { x, y } = getTouchCanvasCoords(e);
     const idx = getHandleAt(x, y);
     if (idx !== null) {
@@ -198,8 +198,8 @@ export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
       dragOffset.x = points[idx].x - x;
       dragOffset.y = points[idx].y - y;
     }
-  }, { passive: false });
-  overlayCanvas.addEventListener('touchmove', e => {
+  }
+  function onTouchMove(e) {
     if (draggingIdx !== null) {
       e.preventDefault();
       const { x, y } = getTouchCanvasCoords(e);
@@ -208,12 +208,29 @@ export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
       draw();
       if (onUpdate) onUpdate(points.map(p => ({ ...p })));
     }
-  }, { passive: false });
-  overlayCanvas.addEventListener('touchend', () => {
+  }
+  function onTouchEnd() {
     draggingIdx = null;
-  });
+  }
+
+  overlayCanvas.addEventListener('touchstart', onTouchStart, { passive: false });
+  overlayCanvas.addEventListener('touchmove', onTouchMove, { passive: false });
+  overlayCanvas.addEventListener('touchend', onTouchEnd);
 
   draw();
+
+  /**
+   * Remove all event listeners registered by this corner pin instance.
+   * Call before re-initializing to prevent accumulated handlers.
+   */
+  draw.destroy = function () {
+    overlayCanvas.removeEventListener('mousedown', onMouseDown);
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+    overlayCanvas.removeEventListener('touchstart', onTouchStart);
+    overlayCanvas.removeEventListener('touchmove', onTouchMove);
+    overlayCanvas.removeEventListener('touchend', onTouchEnd);
+  };
 
   // Return the draw function so the main loop can redraw handles each frame
   return draw;
