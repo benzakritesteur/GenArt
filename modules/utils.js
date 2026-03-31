@@ -18,8 +18,6 @@ export function createFPSMonitor(containerElement) {
   const timestamps = [];
   let frameCount = 0;
   let lastFPS = 0;
-  let lastMatCount = 0;
-  let lastUpdate = 0;
 
   // Create HUD
   const hud = document.createElement('div');
@@ -68,8 +66,6 @@ export function createFPSMonitor(containerElement) {
       const matCount = getMatCount();
       const matWarning = matCount > 200;
       updateHUD(lastFPS, matCount, matWarning);
-      lastMatCount = matCount;
-      lastUpdate = now;
     }
   }
 

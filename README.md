@@ -14,13 +14,14 @@
 
 ### Features
 - **Live Webcam Capture**
-- **Multi-Color Detection** — detect multiple HSV color ranges simultaneously with tabbed profiles
-- **Color-based Object Detection (HSV thresholding)**
+- **Multi-Color Detection** — detect multiple RGB color targets simultaneously with tabbed profiles
+- **Color-based Object Detection (per-channel RGB difference)**
 - **Contour Extraction & Rotated Bounding Boxes**
 - **Perspective Correction (Corner Pin Tool)**
 - **Real-Time Physics Colliders (Matter.js)** — static colliders from detection + dynamic spawned bodies
 - **Dynamic Body Spawning** — auto-spawn particles or click/tap to drop them
-- **Interactive Calibration UI** — HSV sliders per profile, physics controls, corner pin drag handles
+- **Interactive Calibration UI** — color picker, tolerance slider per profile, physics controls, corner pin drag handles
+- **Plugin System** — lightweight lifecycle-hook plugin architecture with event bus
 - **Save/Load Calibration** — persist all settings to localStorage
 - **Export/Import Config Presets** — download/upload JSON preset files
 - **Touch & Mobile Support** — full touch events for corner pin and spawning
@@ -33,7 +34,7 @@
 
 ```text
 +-----------+    +------------------+    +-------------------+    +-------------------+    +-------------------+
-|  Webcam   | -> | HSV Threshold    | -> | Contour Extraction| -> | Perspective Warp  | -> | Physics Colliders |
+|  Webcam   | -> | RGB Color Diff   | -> | Contour Extraction| -> | Perspective Warp  | -> | Physics Colliders |
 |  Capture  |    | (multi-profile)  |    | (OpenCV.js)       |    | (OpenCV.js)       |    | (Matter.js)       |
 +-----------+    +------------------+    +-------------------+    +-------------------+    +-------------------+
                                                                                             + Dynamic Bodies
@@ -48,15 +49,29 @@ project/
 ├── index.html                # Entry point, loads all scripts via <script type="module">
 ├── main.js                   # Main orchestrator (init, loop, UI, multi-color, physics controls)
 ├── config.js                 # Global CONFIG object (color profiles, canvas, stabilizer, physics, etc.)
-└── modules/
-    ├── camera.js             # Webcam capture utilities
-    ├── colorDetection.js     # Multi-color HSV masking & contour finding (OpenCV.js)
-    ├── contourProcessor.js   # Bounding box, angle extraction (OpenCV.js)
-    ├── cornerPin.js          # Perspective transform & UI with touch support (OpenCV.js)
-    ├── physicsEngine.js      # Matter.js world, static collider sync, dynamic body spawning
-    ├── stabilizer.js         # Jitter prevention & object tracking
-    ├── storage.js            # Save/load calibration (localStorage) + export/import presets (JSON)
-    └── utils.js              # FPS/memory HUD and other utilities
+├── modules/
+│   ├── camera.js             # Webcam capture utilities
+│   ├── colorDetection.js     # Multi-color RGB masking & contour finding (OpenCV.js)
+│   ├── contourProcessor.js   # Bounding box, angle extraction (OpenCV.js)
+│   ├── cornerPin.js          # Perspective transform & UI with touch support (OpenCV.js)
+│   ├── physicsEngine.js      # Matter.js world, static collider sync, dynamic body spawning
+│   ├── pluginSystem.js       # Lightweight plugin registry with lifecycle hooks & event bus
+│   ├── stabilizer.js         # Jitter prevention & object tracking
+│   ├── storage.js            # Save/load calibration (localStorage) + export/import presets (JSON)
+│   ├── utils.js              # FPS/memory HUD and other utilities
+│   └── webglRenderer.js      # WebGL2 renderer (planned — feature detection only for now)
+├── plugins/
+│   ├── collisionSpark.js     # Spark/flash effect on dynamic-body collisions
+│   └── trailEffect.js        # Fading motion trail behind dynamic bodies
+└── tests/
+    ├── index.html            # Test harness HTML page
+    ├── testRunner.js         # Minimal browser-based test runner (describe/it/assert)
+    ├── config.test.js        # CONFIG structure & defaults tests
+    ├── contourProcessor.test.js  # Contour processor input-validation tests
+    ├── pluginSystem.test.js  # Plugin system lifecycle & event tests
+    ├── stabilizer.test.js    # Stabilizer tracking & EMA tests
+    ├── storage.test.js       # Persistence round-trip tests
+    └── webglRenderer.test.js # WebGL feature-detection tests
 ```
 
 ### Module Descriptions
@@ -64,13 +79,15 @@ project/
 | Module              | Responsibility                                                    |
 |---------------------|------------------------------------------------------------------|
 | camera.js           | Webcam stream setup and frame capture                             |
-| colorDetection.js   | Multi-color HSV masking (optimized: single HSV conversion), contour finding |
+| colorDetection.js   | Multi-color RGB masking (per-channel difference), contour finding |
 | contourProcessor.js | Rotated bounding box, angle, corner extraction, per-profile debug colors |
 | cornerPin.js        | Perspective transform matrix, drag + touch UI                     |
 | physicsEngine.js    | Matter.js world, static collider sync, dynamic body spawn/cleanup |
+| pluginSystem.js     | Plugin registration, lifecycle hooks (init/update/destroy), event bus |
 | stabilizer.js       | Object tracking, jitter filtering, ID assignment                  |
 | storage.js          | localStorage persistence, JSON file export/import                 |
 | utils.js            | FPS/memory HUD, general utilities                                 |
+| webglRenderer.js    | WebGL2 feature detection (full renderer is planned)               |
 
 ---
 
@@ -109,18 +126,15 @@ All tunable parameters are in `config.js`:
 
 ```javascript
 export const CONFIG = {
-  colorProfiles: [              // Multi-color detection profiles
-    {
-      name: 'Green',
-      hueMin: 30, hueMax: 90,
-      satMin: 80, satMax: 255,
-      valMin: 80, valMax: 255,
-      displayColor: '#0f0'
-    }
+  colorProfiles: [              // Multi-color detection profiles (RGB difference)
+    { name: 'Yellow', targetColor: '#E2C829', tolerance: 70 },
+    { name: 'Pink',   targetColor: '#E8509A', tolerance: 70 },
+    { name: 'Blue',   targetColor: '#3B7DD8', tolerance: 70 },
+    { name: 'Green',  targetColor: '#3BB54A', tolerance: 70 },
   ],
-  minContourArea: 500,
-  stabilizerTolerance: 8,
-  stabilizerFreezeFrames: 10,
+  minContourArea: 150,
+  stabilizerTolerance: 60,
+  stabilizerFreezeFrames: 30,
   canvasWidth: 1280,
   canvasHeight: 720,
   cornerPin: [ ... ],           // 4 perspective transform corners
@@ -128,6 +142,8 @@ export const CONFIG = {
   maxDynamicBodies: 80,         // Max particles
   autoSpawnEnabled: true,
   dynamicBodyRadius: 12,
+  showCameraFeed: true,         // Toggle camera background vs projection mode
+  showSurfaces: true,           // Toggle detected surface overlays
 };
 ```
 
@@ -138,12 +154,14 @@ export const CONFIG = {
 ### Multi-Color Detection
 - Click the **color profile tabs** in the control panel to switch between profiles.
 - Click **+** to add a new color profile (up to 6 predefined colors).
-- Each profile has independent HSV sliders, name, and display color.
+- Each profile has an independent **target color** (hex picker or eyedropper), **tolerance** slider, and name.
+- **Eyedropper**: click the camera preview thumbnail to pick a target color directly from the live feed.
 - Detected objects are tagged with their profile color in the debug overlay.
 
-### HSV Calibration
-- Use the **HSV sliders** for the active color profile to adjust detection in real time.
-- Each slider updates the detection mask instantly.
+### Color Calibration
+- Use the **tolerance slider** for the active profile to widen or narrow the detection range.
+- Lower tolerance = stricter match (only very similar colors). Higher = more lenient.
+- The detection mask preview updates in real time next to the camera preview.
 
 ### Corner Pin Setup
 - Drag (or touch-drag) the 4 yellow handles on the debug overlay to align the detection quad.
@@ -170,7 +188,7 @@ export const CONFIG = {
 
 ## Performance Notes & Known Limitations
 - ⚠️ **PERF:** All OpenCV Mats are manually deleted each frame to prevent memory leaks.
-- Multi-color detection shares a single HSV conversion across profiles for efficiency.
+- Multi-color detection shares a single Gaussian blur across profiles for efficiency.
 - Real-time performance (30+ FPS) depends on webcam resolution, CPU, and browser.
 - No GPU/WebGL acceleration; all processing is CPU-bound.
 - Physics colliders are static and update only when objects move significantly.
@@ -185,9 +203,9 @@ export const CONFIG = {
 - [x] Touch/mobile support for UI
 - [x] Physics: dynamic bodies, more interactions
 - [x] Export/import config presets
+- [x] Modular plugin system
+- [x] Automated test suite (browser-based)
 - [ ] WebGL-accelerated pipeline
-- [ ] Modular plugin system
-- [ ] Automated test suite
 
 ---
 

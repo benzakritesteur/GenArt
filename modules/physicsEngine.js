@@ -7,21 +7,6 @@ import { CONFIG } from '../config.js';
 /** @type {Set<Matter.Body>} */
 const dynamicBodies = new Set();
 
-/**
- * Converts a hex color (3 or 6 char) to rgba string.
- *
- * @param {string} hex - Hex color string (e.g. '#ff0' or '#ffcc00').
- * @param {number} alpha - Alpha value 0-1.
- * @returns {string} CSS rgba() string.
- */
-function hexToRgba(hex, alpha) {
-  let h = hex.replace('#', '');
-  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-  const r = parseInt(h.substring(0, 2), 16);
-  const g = parseInt(h.substring(2, 4), 16);
-  const b = parseInt(h.substring(4, 6), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
 
 /**
  * Initializes the Matter.js physics engine, world, and renderer.

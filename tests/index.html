@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GenArt — Tests</title>
+  <style>
+    body { background: #1a1a1a; color: #ddd; margin: 20px; font-family: monospace; }
+    h1 { color: #6cf; border-bottom: 2px solid #333; padding-bottom: 8px; }
+    #test-results { padding: 10px; }
+  </style>
+</head>
+<body>
+  <h1>🧪 GenArt Test Suite</h1>
+  <div id="test-results"></div>
+  <script type="module">
+    // Import all test modules (they register suites via describe/it)
+    import './config.test.js';
+    import './contourProcessor.test.js';
+    import './stabilizer.test.js';
+    import './storage.test.js';
+    import './pluginSystem.test.js';
+    import './webglRenderer.test.js';
+
+    // Run after all suites are registered
+    import { runAll } from './testRunner.js';
+    runAll();
+  </script>
+</body>
+</html>
+
+

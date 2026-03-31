@@ -122,18 +122,6 @@ export function detectColorMasks(src, profiles) {
   }
 }
 
-/**
- * Single-profile convenience wrapper (kept for backward compatibility).
- *
- * @param {Object} src - Source RGBA cv.Mat.
- * @param {{targetColor: string, tolerance: number}} profile - Color profile.
- * @returns {Object} Binary mask cv.Mat (CV_8UC1, 0/255).
- */
-export function detectColorMask(src, profile) {
-  const result = detectColorMasks(src, [profile]);
-  if (result.length > 0) return result[0].mask;
-  return cv.Mat.zeros(src.rows, src.cols, cv.CV_8UC1);
-}
 
 /**
  * Finds external contours in a binary mask and filters by minimum area.
