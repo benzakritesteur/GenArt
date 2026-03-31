@@ -919,6 +919,22 @@ function buildCalibrationUI() {
   spawnRow.appendChild(spawnLbl);
   panel.appendChild(spawnRow);
 
+  // Recycle oldest toggle (infinite spawn with eviction)
+  const recycleRow = document.createElement('div');
+  recycleRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+  const recycleCheck = document.createElement('input');
+  recycleCheck.type = 'checkbox'; recycleCheck.checked = CONFIG.recycleOldest;
+  recycleCheck.onchange = () => {
+    CONFIG.recycleOldest = recycleCheck.checked;
+    debouncedSave();
+  };
+  recycleRow.appendChild(recycleCheck);
+  const recycleLbl = document.createElement('span');
+  recycleLbl.textContent = 'Recycle oldest (infinite spawn)';
+  recycleLbl.style.fontSize = '12px';
+  recycleRow.appendChild(recycleLbl);
+  panel.appendChild(recycleRow);
+
   // Spawn mode toggle (random / single drop point)
   const modeRow = document.createElement('div');
   modeRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:11px;';

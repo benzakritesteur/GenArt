@@ -63,6 +63,7 @@ export const CONFIG = {
   /** @type {number} */ spawnInterval: 800,
   /** @type {number} */ maxDynamicBodies: 80,
   /** @type {boolean} */ autoSpawnEnabled: true,
+  /** @type {boolean} */ recycleOldest: true,
   /** @type {number} */ dynamicBodyRadius: 12,
   /** @type {string} */ spawnMode: 'random',  // 'random' | 'single'
   /** @type {Point} */ spawnPoint: { x: 640, y: 10 },

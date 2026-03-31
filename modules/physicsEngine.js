@@ -61,12 +61,22 @@ const PALETTE = ['#6cf', '#fc6', '#f66', '#6f6', '#c6f', '#ff6', '#6ff'];
 
 /**
  * Spawn a dynamic circle at (x, y).
+ * When CONFIG.recycleOldest is true and the body limit is reached,
+ * the oldest dynamic body is removed to make room.
+ * When CONFIG.recycleOldest is false and the limit is reached, spawn is skipped.
+ *
  * @param {Matter.World} world
  * @param {number} x
  * @param {number} y
  */
 export function spawnDynamicBody(world, x, y) {
-  if (dynamicBodies.size >= CONFIG.maxDynamicBodies) return;
+  if (dynamicBodies.size >= CONFIG.maxDynamicBodies) {
+    if (!CONFIG.recycleOldest) return;
+    // Evict the oldest body (first entry — Set preserves insertion order)
+    const oldest = dynamicBodies.values().next().value;
+    Matter.World.remove(world, oldest);
+    dynamicBodies.delete(oldest);
+  }
   const r = CONFIG.dynamicBodyRadius;
   const color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
   const body = Matter.Bodies.circle(x, y, r, {
