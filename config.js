@@ -36,6 +36,14 @@ export const CONFIG = {
   /** @type {number} */ stabilizerTolerance: 60,
   /** @type {number} */ stabilizerFreezeFrames: 30,
 
+  // ── Detection performance ──
+  /** @type {number} Downscale factor for detection input (0.25–1.0). Lower = faster, less precise. */
+  detectionScale: 0.5,
+  /** @type {number} Run detection every N frames (1 = every frame, 2 = every other, etc.). */
+  detectionInterval: 2,
+  /** @type {number} Extra dilation kernel size to merge nearby blobs (0 = disabled). */
+  morphDilateSize: 9,
+
   // ── Canvas ──
   /** @type {number} */ canvasWidth: 1280,
   /** @type {number} */ canvasHeight: 720,

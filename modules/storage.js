@@ -16,6 +16,9 @@ function snapshot() {
     minContourArea: CONFIG.minContourArea,
     stabilizerTolerance: CONFIG.stabilizerTolerance,
     stabilizerFreezeFrames: CONFIG.stabilizerFreezeFrames,
+    detectionScale: CONFIG.detectionScale,
+    detectionInterval: CONFIG.detectionInterval,
+    morphDilateSize: CONFIG.morphDilateSize,
     canvasWidth: CONFIG.canvasWidth,
     canvasHeight: CONFIG.canvasHeight,
     cornerPin: CONFIG.cornerPin.map(p => ({ ...p })),
@@ -49,6 +52,7 @@ function mergeIntoConfig(data) {
   }
   const scalars = [
     'minContourArea', 'stabilizerTolerance', 'stabilizerFreezeFrames',
+    'detectionScale', 'detectionInterval', 'morphDilateSize',
     'canvasWidth', 'canvasHeight',
     'spawnInterval', 'maxDynamicBodies', 'autoSpawnEnabled', 'recycleOldest', 'dynamicBodyRadius',
     'spawnMode',

@@ -274,6 +274,10 @@ function stopAutoSpawn() {
 // Main Loop — multi-color detection
 // ═════════════════════════════════════════════
 let cleanupCounter = 0;
+let detectionFrameCounter = 0;
+/** Cached detection results reused on skipped frames. */
+let lastActiveSurfaces = [];
+let lastDiagPerProfile = [];
 
 function mainLoop() {
   if (fpsTick) fpsTick();
@@ -293,177 +297,187 @@ function mainLoop() {
     return;
   }
 
-  // 1. Capture full frame
-  captureFrame(video, captureCanvas, captureCanvas.getContext('2d'));
+  // ── Frame-skipping: only run detection every N frames ──
+  const detectionInterval = Math.max(1, Math.round(CONFIG.detectionInterval || 1));
+  const runDetection = (detectionFrameCounter % detectionInterval === 0);
+  detectionFrameCounter++;
 
-  let src = null;
-  try {
-    src = cv.imread(captureCanvas);
+  if (runDetection) {
+    // 1. Capture full frame
+    captureFrame(video, captureCanvas, captureCanvas.getContext('2d'));
 
-    // 1b. Camera perspective correction (input-side warp)
-    const camPin = CONFIG.cameraCornerPin;
-    const isDefaultCamPin = camPin[0].x === 0 && camPin[0].y === 0 &&
-      camPin[1].x === CONFIG.canvasWidth && camPin[1].y === 0 &&
-      camPin[2].x === CONFIG.canvasWidth && camPin[2].y === CONFIG.canvasHeight &&
-      camPin[3].x === 0 && camPin[3].y === CONFIG.canvasHeight;
-    if (!isDefaultCamPin) {
-      let transformMat = null;
-      let warped = null;
-      try {
-        const dstPts = [
-          { x: 0, y: 0 }, { x: CONFIG.canvasWidth, y: 0 },
-          { x: CONFIG.canvasWidth, y: CONFIG.canvasHeight }, { x: 0, y: CONFIG.canvasHeight }
-        ];
-        transformMat = buildPerspectiveTransform(camPin, dstPts);
-        warped = new cv.Mat();
-        const dsize = new cv.Size(CONFIG.canvasWidth, CONFIG.canvasHeight);
-        cv.warpPerspective(src, warped, transformMat, dsize);
-        src.delete();
-        src = warped;
-        warped = null; // ownership transferred
-      } catch (warpErr) {
-        console.warn('[mainLoop] Camera perspective warp failed:', warpErr);
-        if (warped) warped.delete();
-      } finally {
-        if (transformMat) transformMat.delete();
-      }
-    }
+    let src = null;
+    try {
+      src = cv.imread(captureCanvas);
 
-    // 2. Detect masks for all color profiles
-    const masksInfo = detectColorMasks(src, CONFIG.colorProfiles);
-
-    // Update mask preview for the active profile
-    if (maskPreviewCanvas && masksInfo.length > 0) {
-      const activeMaskInfo = masksInfo.find(m => m.profileIndex === activeProfileIdx);
-      if (activeMaskInfo) {
+      // 1b. Camera perspective correction (input-side warp)
+      const camPin = CONFIG.cameraCornerPin;
+      const isDefaultCamPin = camPin[0].x === 0 && camPin[0].y === 0 &&
+        camPin[1].x === CONFIG.canvasWidth && camPin[1].y === 0 &&
+        camPin[2].x === CONFIG.canvasWidth && camPin[2].y === CONFIG.canvasHeight &&
+        camPin[3].x === 0 && camPin[3].y === CONFIG.canvasHeight;
+      if (!isDefaultCamPin) {
+        let transformMat = null;
+        let warped = null;
         try {
-          const dsize = new cv.Size(maskPreviewCanvas.width, maskPreviewCanvas.height);
-          const resized = new cv.Mat();
-          cv.resize(activeMaskInfo.mask, resized, dsize);
-          cv.imshow(maskPreviewCanvas, resized);
-          resized.delete();
-        } catch (_) { /* ignore preview errors */ }
-      }
-    }
-
-    // 3. Process each mask — isolated per profile so one failure doesn't kill all
-    let allDetections = [];
-    const diagPerProfile = []; // for diagnostic logging
-    for (const { profileIndex, mask } of masksInfo) {
-      try {
-        const profile = CONFIG.colorProfiles[profileIndex];
-
-        // Count non-zero pixels for diagnostics
-        const maskPixels = cv.countNonZero(mask);
-
-        const contoursVec = findContours(mask);
-        const contourCount = contoursVec.size();
-        const contours = [];
-        for (let i = 0; i < contoursVec.size(); ++i) contours.push(contoursVec.get(i));
-        const detected = processContours(contours);
-
-        diagPerProfile.push({
-          name: profile.name,
-          maskPx: maskPixels,
-          contours: contourCount,
-          shapes: detected.length
-        });
-
-        // 4. Tag with profile info — coordinates are already in canvas space
-        for (const obj of detected) {
-          allDetections.push({
-            ...obj,
-            profileIndex,
-            profileName: profile.name,
-            displayColor: profile.targetColor
-          });
+          const dstPts = [
+            { x: 0, y: 0 }, { x: CONFIG.canvasWidth, y: 0 },
+            { x: CONFIG.canvasWidth, y: CONFIG.canvasHeight }, { x: 0, y: CONFIG.canvasHeight }
+          ];
+          transformMat = buildPerspectiveTransform(camPin, dstPts);
+          warped = new cv.Mat();
+          const dsize = new cv.Size(CONFIG.canvasWidth, CONFIG.canvasHeight);
+          cv.warpPerspective(src, warped, transformMat, dsize);
+          src.delete();
+          src = warped;
+          warped = null; // ownership transferred
+        } catch (warpErr) {
+          console.warn('[mainLoop] Camera perspective warp failed:', warpErr);
+          if (warped) warped.delete();
+        } finally {
+          if (transformMat) transformMat.delete();
         }
-
-        // Cleanup OpenCV mats
-        contours.forEach(c => c.delete());
-        contoursVec.delete();
-      } catch (profileErr) {
-        // Isolate per-profile errors — log but continue to next profile
-        console.warn(`[mainLoop] Detection error for profile ${profileIndex}:`, profileErr);
-      } finally {
-        mask.delete();
       }
-    }
 
-    // 5. Stabilize
-    const stabilized = stabilizeObjects(allDetections);
+      // 2. Detect masks for all color profiles
+      const masksInfo = detectColorMasks(src, CONFIG.colorProfiles);
 
-    // Propagate display info from detections to stabilized (by matching id).
-    // Only objects with a current-frame detection get displayColor — ghost
-    // objects (persisted by freeze-frames but not detected this frame) are
-    // excluded from physics and rendering to avoid stale colliders.
-    const activeSurfaces = [];
-    for (const s of stabilized) {
-      let best = null, bestDist = Infinity;
-      for (const d of allDetections) {
-        const dx = d.center.x - s.center.x, dy = d.center.y - s.center.y;
-        const dist = dx * dx + dy * dy;
-        if (dist < bestDist) { bestDist = dist; best = d; }
+      // Update mask preview for the active profile
+      if (maskPreviewCanvas && masksInfo.length > 0) {
+        const activeMaskInfo = masksInfo.find(m => m.profileIndex === activeProfileIdx);
+        if (activeMaskInfo) {
+          try {
+            const dsize = new cv.Size(maskPreviewCanvas.width, maskPreviewCanvas.height);
+            const resized = new cv.Mat();
+            cv.resize(activeMaskInfo.mask, resized, dsize);
+            cv.imshow(maskPreviewCanvas, resized);
+            resized.delete();
+          } catch (_) { /* ignore preview errors */ }
+        }
       }
-      if (best) {
-        s.displayColor = best.displayColor;
-        s.profileName = best.profileName;
-        activeSurfaces.push(s);
+
+      // 3. Process each mask — isolated per profile so one failure doesn't kill all
+      let allDetections = [];
+      const diagPerProfile = [];
+      for (const { profileIndex, mask } of masksInfo) {
+        try {
+          const profile = CONFIG.colorProfiles[profileIndex];
+
+          // Count non-zero pixels for diagnostics
+          const maskPixels = cv.countNonZero(mask);
+
+          const contoursVec = findContours(mask);
+          const contourCount = contoursVec.size();
+          const contours = [];
+          for (let i = 0; i < contoursVec.size(); ++i) contours.push(contoursVec.get(i));
+          const detected = processContours(contours);
+
+          diagPerProfile.push({
+            name: profile.name,
+            maskPx: maskPixels,
+            contours: contourCount,
+            shapes: detected.length
+          });
+
+          // 4. Tag with profile info — coordinates are already in canvas space
+          for (const obj of detected) {
+            allDetections.push({
+              ...obj,
+              profileIndex,
+              profileName: profile.name,
+              displayColor: profile.targetColor
+            });
+          }
+
+          // Cleanup OpenCV mats
+          contours.forEach(c => c.delete());
+          contoursVec.delete();
+        } catch (profileErr) {
+          console.warn(`[mainLoop] Detection error for profile ${profileIndex}:`, profileErr);
+        } finally {
+          mask.delete();
+        }
       }
+
+      // 5. Stabilize
+      const stabilized = stabilizeObjects(allDetections);
+
+      // Propagate display info from detections to stabilized (by matching id).
+      const activeSurfaces = [];
+      for (const s of stabilized) {
+        let best = null, bestDist = Infinity;
+        for (const d of allDetections) {
+          const dx = d.center.x - s.center.x, dy = d.center.y - s.center.y;
+          const dist = dx * dx + dy * dy;
+          if (dist < bestDist) { bestDist = dist; best = d; }
+        }
+        if (best) {
+          s.displayColor = best.displayColor;
+          s.profileName = best.profileName;
+          activeSurfaces.push(s);
+        }
+      }
+
+      // Cache detection results for skipped frames
+      lastActiveSurfaces = activeSurfaces;
+      lastDiagPerProfile = diagPerProfile;
+
+      // 6. Sync physics
+      syncPhysicsBodies(physics.world, activeSurfaces, bodyRegistry);
+
+      // 7. Store active surfaces for the afterRender overlay drawing
+      currentSurfaces = activeSurfaces;
+
+      // ── Diagnostic logging (throttled: every ~2s at 60fps) ──
+      if (cleanupCounter % 120 === 0) {
+        const profileSummary = diagPerProfile.map(
+          d => `${d.name}(px:${d.maskPx} cnt:${d.contours} shapes:${d.shapes})`
+        ).join(' ');
+        console.log(`[detection] ${profileSummary} → raw=${allDetections.length} stabilized=${stabilized.length} bodies=${bodyRegistry.size} scale=${CONFIG.detectionScale} skip=${detectionInterval}`);
+      }
+
+      src.delete();
+    } catch (err) {
+      let msg = err;
+      if (typeof err === 'number' && typeof cv !== 'undefined' && cv.exceptionFromPtr) {
+        try { msg = cv.exceptionFromPtr(err).msg; } catch (_) { msg = 'OpenCV error (code ' + err + ')'; }
+      }
+      console.error('Main loop error:', msg);
+      if (src) try { src.delete(); } catch (_) {}
     }
-
-    // 6. Sync physics — only actively-detected surfaces get colliders
-    syncPhysicsBodies(physics.world, activeSurfaces, bodyRegistry);
-
-    // 7. Store active surfaces for the afterRender overlay drawing
-    currentSurfaces = activeSurfaces;
-
-    // ── Diagnostic logging (throttled: every ~2s at 60fps) ──
-    if (cleanupCounter % 120 === 0) {
-      const profileSummary = diagPerProfile.map(
-        d => `${d.name}(px:${d.maskPx} cnt:${d.contours} shapes:${d.shapes})`
-      ).join(' ');
-      console.log(`[detection] ${profileSummary} → raw=${allDetections.length} stabilized=${stabilized.length} bodies=${bodyRegistry.size}`);
-    }
-
-    // 8. Debug overlay — HUD + labels; corner pin handles on D toggle
-    debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-    drawDebugOverlay(debugCtx, activeSurfaces, getDynamicBodyCount(), bodyRegistry.size);
-    if (showDebug && cornerPinDraw) cornerPinDraw();
-    if (showCameraPin && cameraPinDraw) cameraPinDraw();
-
-    // Draw spawn point marker when in single mode
-    if (CONFIG.spawnMode === 'single') {
-      debugCtx.save();
-      debugCtx.fillStyle = '#f06';
-      debugCtx.strokeStyle = '#fff';
-      debugCtx.lineWidth = 2;
-      debugCtx.beginPath();
-      debugCtx.arc(CONFIG.spawnPoint.x, CONFIG.spawnPoint.y, 8, 0, 2 * Math.PI);
-      debugCtx.fill();
-      debugCtx.stroke();
-      debugCtx.fillStyle = '#fff';
-      debugCtx.font = 'bold 10px monospace';
-      debugCtx.textAlign = 'center';
-      debugCtx.fillText('DROP', CONFIG.spawnPoint.x, CONFIG.spawnPoint.y + 20);
-      debugCtx.restore();
-    }
-
-    // 9. Periodic cleanup of dynamic bodies
-    if (++cleanupCounter % 60 === 0) {
-      cleanupDynamicBodies(physics.world);
-    }
-
-    src.delete();
-  } catch (err) {
-    // Decode OpenCV.js C++ exception pointers into readable messages
-    let msg = err;
-    if (typeof err === 'number' && typeof cv !== 'undefined' && cv.exceptionFromPtr) {
-      try { msg = cv.exceptionFromPtr(err).msg; } catch (_) { msg = 'OpenCV error (code ' + err + ')'; }
-    }
-    console.error('Main loop error:', msg);
-    if (src) try { src.delete(); } catch (_) {}
+  } else {
+    // Skipped frame — reuse last detection results for physics + rendering
+    currentSurfaces = lastActiveSurfaces;
   }
+
+  // ── Always render (even on skipped detection frames) ──
+  debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+  drawDebugOverlay(debugCtx, currentSurfaces, getDynamicBodyCount(), bodyRegistry.size);
+  if (showDebug && cornerPinDraw) cornerPinDraw();
+  if (showCameraPin && cameraPinDraw) cameraPinDraw();
+
+  // Draw spawn point marker when in single mode
+  if (CONFIG.spawnMode === 'single') {
+    debugCtx.save();
+    debugCtx.fillStyle = '#f06';
+    debugCtx.strokeStyle = '#fff';
+    debugCtx.lineWidth = 2;
+    debugCtx.beginPath();
+    debugCtx.arc(CONFIG.spawnPoint.x, CONFIG.spawnPoint.y, 8, 0, 2 * Math.PI);
+    debugCtx.fill();
+    debugCtx.stroke();
+    debugCtx.fillStyle = '#fff';
+    debugCtx.font = 'bold 10px monospace';
+    debugCtx.textAlign = 'center';
+    debugCtx.fillText('DROP', CONFIG.spawnPoint.x, CONFIG.spawnPoint.y + 20);
+    debugCtx.restore();
+  }
+
+  // Periodic cleanup of dynamic bodies
+  if (++cleanupCounter % 60 === 0) {
+    cleanupDynamicBodies(physics.world);
+  }
+
 
   requestAnimationFrame(mainLoop);
 }
@@ -1090,6 +1104,22 @@ function buildCalibrationUI() {
 
   addSliderRow(panel, 'Persist (f)', CONFIG.stabilizerFreezeFrames, 5, 120, 5, v => {
     CONFIG.stabilizerFreezeFrames = v; debouncedSave();
+  });
+
+  // ── Performance sub-section ──
+  const perfTitle = document.createElement('div');
+  perfTitle.textContent = '⚡ Performance';
+  perfTitle.style.cssText = 'font-weight:bold;margin:8px 0 4px;font-size:12px;color:#fc6;';
+  panel.appendChild(perfTitle);
+
+  addSliderRow(panel, 'Det. scale', CONFIG.detectionScale * 100, 25, 100, 5, v => {
+    CONFIG.detectionScale = v / 100; debouncedSave();
+  });
+  addSliderRow(panel, 'Det. skip', CONFIG.detectionInterval, 1, 6, 1, v => {
+    CONFIG.detectionInterval = v; debouncedSave();
+  });
+  addSliderRow(panel, 'Dilate size', CONFIG.morphDilateSize, 0, 21, 2, v => {
+    CONFIG.morphDilateSize = v; debouncedSave();
   });
 
   // ── Separator ──
