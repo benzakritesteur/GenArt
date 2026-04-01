@@ -2,15 +2,18 @@
  * Main entry point for GenArt real-time projection mapping system.
  * Orchestrates camera, OpenCV, physics, and UI modules.
  */
-import { initCamera, captureFrame } from './modules/camera.js';
-import { detectColorMasks, findContours } from './modules/colorDetection.js';
-import { processContours, drawDebugOverlay } from './modules/contourProcessor.js';
-import { initCornerPinUI, buildPerspectiveTransform } from './modules/cornerPin.js';
-import { stabilizeObjects } from './modules/stabilizer.js';
+import { initCamera, captureFrame } from '../shared/modules/camera.js';
+import { detectColorMasks, findContours } from '../shared/modules/colorDetection.js';
+import { processContours, drawDebugOverlay } from '../shared/modules/contourProcessor.js';
+import { initCornerPinUI, buildPerspectiveTransform } from '../shared/modules/cornerPin.js';
+import { createStabilizer } from '../shared/modules/stabilizer.js';
 import { initPhysics, syncPhysicsBodies, spawnDynamicBody, cleanupDynamicBodies, getDynamicBodyCount } from './modules/physicsEngine.js';
 import { CONFIG } from './config.js';
-import { createFPSMonitor } from './modules/utils.js';
+import { createFPSMonitor } from '../shared/modules/utils.js';
 import { saveCalibration, loadCalibration, clearCalibration, exportPreset, importPreset } from './modules/storage.js';
+
+// Create a stabilizer instance for this app
+const stabilizer = createStabilizer();
 
 // ─── DOM elements ───
 const video = document.getElementById('video');
@@ -340,7 +343,12 @@ function mainLoop() {
       }
 
       // 2. Detect masks for all color profiles
-      const masksInfo = detectColorMasks(src, CONFIG.colorProfiles);
+      const masksInfo = detectColorMasks(src, CONFIG.colorProfiles, {
+        detectionScale: CONFIG.detectionScale,
+        canvasWidth: CONFIG.canvasWidth,
+        canvasHeight: CONFIG.canvasHeight,
+        morphDilateSize: CONFIG.morphDilateSize,
+      });
 
       // Update mask preview for the active profile
       if (maskPreviewCanvas && masksInfo.length > 0) {
@@ -366,7 +374,7 @@ function mainLoop() {
           // Count non-zero pixels for diagnostics
           const maskPixels = cv.countNonZero(mask);
 
-          const contoursVec = findContours(mask);
+          const contoursVec = findContours(mask, CONFIG.minContourArea);
           const contourCount = contoursVec.size();
           const contours = [];
           for (let i = 0; i < contoursVec.size(); ++i) contours.push(contoursVec.get(i));
@@ -400,7 +408,11 @@ function mainLoop() {
       }
 
       // 5. Stabilize
-      const stabilized = stabilizeObjects(allDetections);
+      const stabilized = stabilizer.stabilize(
+        allDetections,
+        CONFIG.stabilizerTolerance,
+        CONFIG.stabilizerFreezeFrames
+      );
 
       // Propagate display info from detections to stabilized (by matching id).
       const activeSurfaces = [];

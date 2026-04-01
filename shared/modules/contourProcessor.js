@@ -1,7 +1,13 @@
 /**
- * Contour processing utilities for extracting bounding box and angle information from OpenCV contours.
- * Uses global `cv` object for minAreaRect only — corner points are computed in
- * pure JavaScript to avoid fragile cv.boxPoints / Float32Array extraction.
+ * Shared contour processing utilities.
+ *
+ * Extracts bounding box, angle, and corner information from OpenCV contours.
+ * Uses global `cv` object for minAreaRect only — corner points are computed
+ * in pure JavaScript to avoid fragile cv.boxPoints / Float32Array extraction.
+ *
+ * No application-specific config dependency — fully reusable across apps.
+ *
+ * @module shared/contourProcessor
  */
 
 /**
@@ -22,7 +28,6 @@ function computeBoxCorners(cx, cy, w, h, angleDeg) {
   const hw = w / 2;
   const hh = h / 2;
 
-  // Local offsets rotated by angle, translated to world coordinates
   return [
     { x: cx + (-hw * cosA - (-hh) * sinA), y: cy + (-hw * sinA + (-hh) * cosA) },
     { x: cx + ( hw * cosA - (-hh) * sinA), y: cy + ( hw * sinA + (-hh) * cosA) },
@@ -32,28 +37,27 @@ function computeBoxCorners(cx, cy, w, h, angleDeg) {
 }
 
 /**
- * Processes an array of OpenCV contour Mats and extracts bounding box, center, size, angle, and corners.
- * Uses minAreaRect for accurate rotated rectangle parameters and computes corner positions in JS.
+ * Processes an array of OpenCV contour Mats and extracts bounding box, center,
+ * size, angle, and corners. Uses minAreaRect for accurate rotated rectangle
+ * parameters and computes corner positions in JS.
  * Filters by aspect ratio to reject elongated non-rectangular blobs.
  *
  * @param {cv.Mat[]} contours - Array of OpenCV contour Mats.
- * @returns {Array<{center: {x: number, y: number}, size: {width: number, height: number}, angle: number, corners: Array<{x: number, y: number}>}>} Array of detected object info.
+ * @returns {Array<{center: {x: number, y: number}, size: {width: number, height: number}, angle: number, corners: Array<{x: number, y: number}>}>}
  */
 export function processContours(contours) {
   if (!Array.isArray(contours)) throw new Error('contours must be an array of cv.Mat');
   const results = [];
+
   for (const contour of contours) {
     try {
-      // Skip contours with too few points
       if (!contour || contour.rows < 3) continue;
 
       const rotatedRect = cv.minAreaRect(contour);
       const { center, size, angle } = rotatedRect;
 
-      // Skip degenerate rectangles (zero area)
       if (size.width < 1 || size.height < 1) continue;
 
-      // Compute corners from the ORIGINAL rotated rect (pure JS — always works)
       const corners = computeBoxCorners(center.x, center.y, size.width, size.height, angle);
 
       // Normalize: ensure width >= height and adjust angle
@@ -67,7 +71,7 @@ export function processContours(contours) {
         normalizedAngle = angle - 90;
       }
 
-      // Aspect ratio filter — reject very elongated shapes (not post-its)
+      // Aspect ratio filter — reject very elongated shapes
       const aspect = w / h;
       if (aspect > 8.0) continue;
 
@@ -78,7 +82,6 @@ export function processContours(contours) {
         corners
       });
     } catch (e) {
-      // Isolate per-contour errors — one bad contour must not crash the whole batch
       console.warn('[contourProcessor] Skipping contour due to error:', e);
     }
   }
@@ -87,8 +90,6 @@ export function processContours(contours) {
 
 /**
  * Draws debug overlays for detected objects on a Canvas 2D context.
- * Shows rotated bounding boxes with semi-transparent fills, center dots,
- * info labels, and a diagnostic HUD with object count and body count.
  *
  * @param {CanvasRenderingContext2D} ctx - Canvas 2D context to draw on.
  * @param {Array<{center: {x: number, y: number}, size: {width: number, height: number}, angle: number, corners: Array<{x: number, y: number}>, id?: number, displayColor?: string, profileName?: string}>} detectedObjects
@@ -99,7 +100,6 @@ export function processContours(contours) {
 export function drawDebugOverlay(ctx, detectedObjects, bodyCount = 0, staticBodyCount = 0) {
   ctx.save();
 
-  // Diagnostic HUD
   ctx.fillStyle = 'rgba(0,0,0,0.7)';
   ctx.fillRect(8, 8, 340, 42);
   ctx.font = 'bold 13px monospace';
@@ -113,19 +113,22 @@ export function drawDebugOverlay(ctx, detectedObjects, bodyCount = 0, staticBody
   ctx.fillText(`Balls: ${bodyCount}`, 250, 14);
   ctx.fillStyle = '#888';
   ctx.font = '11px monospace';
-  ctx.fillText(detectedObjects.length === 0 ? 'Pick target color & adjust tolerance' : 'Surfaces detected ✓ — balls bounce on them', 14, 32);
+  ctx.fillText(
+    detectedObjects.length === 0
+      ? 'Pick target color & adjust tolerance'
+      : 'Surfaces detected ✓',
+    14, 32
+  );
 
   ctx.lineWidth = 2;
   for (const obj of detectedObjects) {
     const color = obj.displayColor || 'lime';
 
-    // Center dot (lightweight — the filled polygon is drawn by the afterRender overlay)
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(obj.center.x, obj.center.y, 4, 0, 2 * Math.PI);
     ctx.fill();
 
-    // Draw info text (ID, angle, size, profile name)
     ctx.fillStyle = 'white';
     ctx.font = '12px monospace';
     ctx.textAlign = 'center';

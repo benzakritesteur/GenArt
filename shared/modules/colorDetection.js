@@ -1,18 +1,21 @@
 /**
- * Color detection and contour finding utilities using OpenCV.js.
+ * Shared color detection and contour finding utilities using OpenCV.js.
  *
  * Detection pipeline (per profile):
- *   1. Optionally downscale source for performance (CONFIG.detectionScale)
+ *   1. Optionally downscale source for performance (detectionScale)
  *   2. Gaussian blur on the RGB image (noise reduction)
  *   3. Convert to HSV (OpenCV WASM — robust under varying lighting)
- *   4. cv.inRange in HSV space for binary mask (WASM — replaces JS pixel loop)
- *      Handles hue wrapping for red-ish colors via two-range bitwise_or.
+ *   4. cv.inRange in HSV space for binary mask (handles hue wrapping)
  *   5. Morphology: open + close + optional dilation to merge nearby blobs
  *   6. Contour finding + area filtering + vertex simplification (approxPolyDP)
  *
  * Falls back to direct RGBA per-channel comparison if cv.cvtColor is unavailable.
+ *
+ * **Config-agnostic** — all tuning parameters are passed via a `detectionConfig`
+ * object, not imported from a fixed config module.
+ *
+ * @module shared/colorDetection
  */
-import { CONFIG } from '../config.js';
 
 /** Flag set once after first successful cv.cvtColor call. */
 let hsvSupported = null;
@@ -28,14 +31,15 @@ let _lastDilateSize = 0;
  * Return (and lazily create) cached structuring elements & sizes.
  * Avoids repeated WASM heap allocation every frame.
  *
+ * @param {number} morphDilateSize - Extra dilation kernel size (0 = disabled, ≥3 for active dilation).
  * @returns {{ blurSize: Object, kernelSmall: Object, kernelLarge: Object, kernelDilate: Object|null }}
  */
-function getCachedKernels() {
+function getCachedKernels(morphDilateSize) {
   if (!_blurSize) _blurSize = new cv.Size(5, 5);
   if (!_kernelSmall) _kernelSmall = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
   if (!_kernelLarge) _kernelLarge = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
 
-  const dilateSize = CONFIG.morphDilateSize || 0;
+  const dilateSize = morphDilateSize || 0;
   if (dilateSize >= 3 && dilateSize !== _lastDilateSize) {
     if (_kernelDilate) _kernelDilate.delete();
     _kernelDilate = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(dilateSize, dilateSize));
@@ -104,8 +108,7 @@ export function rgbToHsv(r, g, b) {
 
 /**
  * Builds a binary mask using cv.inRange in HSV space (runs in WASM).
- * Handles hue wrapping for red-ish colors via two separate inRange calls
- * combined with cv.bitwise_or.
+ * Handles hue wrapping for red-ish colors via two separate inRange calls.
  *
  * @param {Object} hsv  - HSV cv.Mat (3-channel, CV_8UC3).
  * @param {number} th   - Target hue (0-179).
@@ -128,7 +131,6 @@ function buildMaskInRange(hsv, th, ts, tv, hTol, sTol, vTol) {
   const hueWraps = hLow < 0 || hHigh > 179;
 
   if (!hueWraps) {
-    // Simple case — single inRange call
     const lo = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [hLow, sLow, vLow, 0]);
     const hi = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [hHigh, sHigh, vHigh, 255]);
     const mask = new cv.Mat();
@@ -138,7 +140,6 @@ function buildMaskInRange(hsv, th, ts, tv, hTol, sTol, vTol) {
     return mask;
   }
 
-  // Hue wraps around 0/179 — need two ranges OR-ed together
   const hLowWrapped  = hLow < 0 ? hLow + 180 : hLow;
   const hHighWrapped = hHigh > 179 ? hHigh - 180 : hHigh;
 
@@ -162,8 +163,7 @@ function buildMaskInRange(hsv, th, ts, tv, hTol, sTol, vTol) {
 
 /**
  * Builds a binary mask by comparing each pixel's RGBA channels against a
- * target RGB color within a per-channel tolerance. Used as a fallback when
- * HSV conversion is unavailable.
+ * target RGB color within a per-channel tolerance (RGBA fallback).
  *
  * @param {Uint8Array} rgba   - Source pixel data (RGBA interleaved).
  * @param {number}     width  - Image width in pixels.
@@ -192,21 +192,36 @@ function buildMaskFromRgba(rgba, width, height, tr, tg, tb, tol) {
 }
 
 /**
+ * @typedef {Object} DetectionConfig
+ * @property {number} detectionScale  - Downscale factor for detection input (0.25–1.0).
+ * @property {number} canvasWidth     - Full-resolution canvas width.
+ * @property {number} canvasHeight    - Full-resolution canvas height.
+ * @property {number} morphDilateSize - Extra dilation kernel size (0 = disabled).
+ */
+
+/**
  * Optimized multi-profile detection using HSV color space with cv.inRange.
  *
- * Converts the RGBA source to HSV once (OpenCV WASM), then uses cv.inRange
- * per profile (runs entirely in WASM — 5-10x faster than a JS pixel loop).
+ * Converts the RGBA source to HSV once, then uses cv.inRange per profile.
  * Morphology cleanup and optional dilation are applied via OpenCV.
  * Falls back to RGBA comparison if cv.cvtColor is not available.
  *
- * @param {Object} src      - Source RGBA cv.Mat (from cv.imread).
+ * @param {Object} src - Source RGBA cv.Mat (from cv.imread).
  * @param {Array<{targetColor: string, tolerance: number}>} profiles - Color profiles.
+ * @param {DetectionConfig} detectionConfig - Detection tuning parameters.
  * @returns {Array<{profileIndex: number, mask: Object}>} Array of {profileIndex, mask (cv.Mat)}.
  */
-export function detectColorMasks(src, profiles) {
-  const mats = [];   // Track all intermediate Mats for guaranteed cleanup
+export function detectColorMasks(src, profiles, detectionConfig) {
+  const {
+    detectionScale = 1.0,
+    canvasWidth = src.cols,
+    canvasHeight = src.rows,
+    morphDilateSize = 0,
+  } = detectionConfig || {};
+
+  const mats = [];
   const results = [];
-  const { blurSize, kernelSmall, kernelLarge, kernelDilate } = getCachedKernels();
+  const { blurSize, kernelSmall, kernelLarge, kernelDilate } = getCachedKernels(morphDilateSize);
 
   try {
     let hsvMat = null;
@@ -214,7 +229,7 @@ export function detectColorMasks(src, profiles) {
     let useHsv;
 
     // ── Downscale for performance ──
-    const scale = Math.max(0.25, Math.min(1.0, CONFIG.detectionScale || 1.0));
+    const scale = Math.max(0.25, Math.min(1.0, detectionScale));
     let working = src;
     if (scale < 1.0) {
       const dw = Math.round(src.cols * scale);
@@ -225,7 +240,7 @@ export function detectColorMasks(src, profiles) {
       working = small;
     }
 
-    // ── Try HSV pipeline (much more robust under varying lighting) ──
+    // ── Try HSV pipeline ──
     if (hsvSupported !== false) {
       try {
         const rgb = new cv.Mat();
@@ -244,7 +259,7 @@ export function detectColorMasks(src, profiles) {
 
         if (hsvSupported === null) {
           hsvSupported = true;
-          console.log('[colorDetection] HSV + cv.inRange pipeline active — optimized detection enabled');
+          console.log('[colorDetection] HSV + cv.inRange pipeline active');
         }
       } catch (convErr) {
         hsvSupported = false;
@@ -275,7 +290,6 @@ export function detectColorMasks(src, profiles) {
 
       if (useHsv) {
         const target = rgbToHsv(r, g, b);
-        // Map user tolerance (0-255 RGB space) to HSV tolerances.
         const hTol = Math.max(10, Math.round(tol * 0.35));
         const sTol = Math.max(40, Math.round(tol * 1.2));
         const vTol = Math.max(50, Math.round(tol * 1.5));
@@ -286,7 +300,6 @@ export function detectColorMasks(src, profiles) {
         rawMask.data.set(maskBytes);
       }
 
-      // Morphology: open removes salt noise, close fills pepper gaps
       const opened = new cv.Mat();
       cv.morphologyEx(rawMask, opened, cv.MORPH_OPEN, kernelSmall);
       rawMask.delete();
@@ -295,7 +308,6 @@ export function detectColorMasks(src, profiles) {
       cv.morphologyEx(opened, closed, cv.MORPH_CLOSE, kernelLarge);
       opened.delete();
 
-      // Optional extra dilation to merge nearby blobs from the same surface
       let finalMask = closed;
       if (kernelDilate) {
         const dilated = new cv.Mat();
@@ -304,10 +316,10 @@ export function detectColorMasks(src, profiles) {
         finalMask = dilated;
       }
 
-      // If downscaled, resize mask back to full canvas dimensions for contour coordinates
+      // Resize mask back to full canvas dimensions if downscaled
       if (scale < 1.0) {
         const fullMask = new cv.Mat();
-        cv.resize(finalMask, fullMask, new cv.Size(CONFIG.canvasWidth, CONFIG.canvasHeight), 0, 0, cv.INTER_NEAREST);
+        cv.resize(finalMask, fullMask, new cv.Size(canvasWidth, canvasHeight), 0, 0, cv.INTER_NEAREST);
         finalMask.delete();
         results.push({ profileIndex: i, mask: fullMask });
       } else {
@@ -320,20 +332,18 @@ export function detectColorMasks(src, profiles) {
     for (const m of mats) {
       try { m.delete(); } catch (_) { /* ignore cleanup errors */ }
     }
-    // NOTE: cached kernels are NOT deleted — reused across frames for page lifetime.
   }
 }
 
-
 /**
  * Finds external contours in a binary mask and filters by minimum area.
- * Uses cv.approxPolyDP to simplify contour vertices, reducing downstream
- * minAreaRect cost and producing cleaner rectangle fits.
+ * Uses cv.approxPolyDP to simplify contour vertices.
  *
  * @param {Object} mask - Binary mask cv.Mat (single channel, 0/255).
+ * @param {number} minContourArea - Minimum contour area in pixels to keep.
  * @returns {Object} cv.MatVector of contours passing area threshold.
  */
-export function findContours(mask) {
+export function findContours(mask, minContourArea) {
   let contours = null, hierarchy = null, filtered = null;
   try {
     contours = new cv.MatVector();
@@ -344,12 +354,10 @@ export function findContours(mask) {
     for (let i = 0; i < contours.size(); ++i) {
       const cnt = contours.get(i);
       const area = cv.contourArea(cnt);
-      if (area >= CONFIG.minContourArea) {
-        // Simplify contour to reduce vertex count (~2% of perimeter)
+      if (area >= minContourArea) {
         const perimeter = cv.arcLength(cnt, true);
         const approx = new cv.Mat();
         cv.approxPolyDP(cnt, approx, 0.02 * perimeter, true);
-
         filtered.push_back(approx);
         approx.delete();
       }
@@ -361,3 +369,4 @@ export function findContours(mask) {
     if (hierarchy) hierarchy.delete();
   }
 }
+

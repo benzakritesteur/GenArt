@@ -1,6 +1,9 @@
 /**
- * Utility for monitoring FPS and OpenCV Mat memory usage in a fixed HUD.
- * @module utils
+ * Shared utility module — FPS monitoring and general helpers.
+ *
+ * No application-specific config dependency — fully reusable across apps.
+ *
+ * @module shared/utils
  */
 
 /**
@@ -8,10 +11,6 @@
  *
  * @param {HTMLElement} containerElement - The DOM element to attach the HUD to (usually document.body).
  * @returns {function(): void} tick - Call this function once per frame to update FPS and memory info.
- * @example
- * import { createFPSMonitor } from './modules/utils.js';
- * const tick = createFPSMonitor(document.body);
- * // In main loop: tick();
  */
 export function createFPSMonitor(containerElement) {
   const bufferSize = 60;
@@ -19,7 +18,6 @@ export function createFPSMonitor(containerElement) {
   let frameCount = 0;
   let lastFPS = 0;
 
-  // Create HUD
   const hud = document.createElement('div');
   hud.style.position = 'fixed';
   hud.style.left = '16px';
@@ -34,6 +32,13 @@ export function createFPSMonitor(containerElement) {
   hud.style.boxShadow = '0 2px 8px rgba(0,0,0,0.18)';
   containerElement.appendChild(hud);
 
+  /**
+   * Update the HUD display.
+   *
+   * @param {number} fps - Current frames per second.
+   * @param {number} matCount - Number of active OpenCV Mats.
+   * @param {boolean} matWarning - Whether the Mat count indicates a potential leak.
+   */
   function updateHUD(fps, matCount, matWarning) {
     hud.innerHTML =
       `<span style="color:#6cf">FPS:</span> ${fps.toFixed(1)}<br>` +
@@ -41,19 +46,28 @@ export function createFPSMonitor(containerElement) {
       (matWarning ? ` <span style="color:#f44;font-weight:bold">(LEAK?)</span>` : '');
   }
 
+  /**
+   * Reads the global OpenCV Mat counter if available.
+   *
+   * @returns {number} Active Mat count, or 0 if unavailable.
+   */
   function getMatCount() {
-    // OpenCV.js exposes a global counter for Mats in debug builds as cv.Mat.counter
-    // If not available, fallback to 0
     return (window.cv && window.cv.Mat && typeof window.cv.Mat.counter === 'number')
       ? window.cv.Mat.counter
       : 0;
   }
 
+  /**
+   * Frame tick — call once per animation frame.
+   *
+   * @returns {void}
+   */
   function tick() {
     const now = performance.now();
     timestamps.push(now);
     if (timestamps.length > bufferSize) timestamps.shift();
     frameCount++;
+
     if (frameCount % 10 === 0) {
       if (timestamps.length >= 2) {
         const deltas = [];
@@ -64,14 +78,11 @@ export function createFPSMonitor(containerElement) {
         lastFPS = 1000 / avgDelta;
       }
       const matCount = getMatCount();
-      const matWarning = matCount > 200;
-      updateHUD(lastFPS, matCount, matWarning);
+      updateHUD(lastFPS, matCount, matCount > 200);
     }
   }
 
-  // Initial HUD
   updateHUD(0, getMatCount(), false);
-
   return tick;
 }
 

@@ -1,77 +1,84 @@
 /**
+ * Shared camera module — webcam capture utilities.
+ *
+ * Initialises the user's webcam stream and provides frame capture.
+ * No application-specific config dependency — fully reusable across apps.
+ *
+ * @module shared/camera
+ */
+
+/**
  * Initializes the user's webcam and attaches the stream to the provided video element.
  *
  * @async
  * @param {HTMLVideoElement} videoElement - The video element to attach the webcam stream to.
+ * @param {{width?: number, height?: number}} [resolution={width:1280, height:720}] - Requested resolution.
  * @returns {Promise<void>} Resolves when the video metadata is loaded and the stream is playing.
  * @throws {Error} If camera access is denied or fails for any reason.
- * @example
- * import { initCamera } from './modules/camera.js';
- * const video = document.getElementById('video');
- * await initCamera(video);
  */
-export async function initCamera(videoElement) {
-  console.log('[initCamera] Called. videoElement:', videoElement);
+export async function initCamera(videoElement, resolution = { width: 1280, height: 720 }) {
   const cameraErrorDiv = document.getElementById('cameraError');
+
   if (!(videoElement instanceof HTMLVideoElement)) {
-    console.error('[initCamera] Provided videoElement is not an HTMLVideoElement:', videoElement);
+    const msg = 'Provided videoElement is not an HTMLVideoElement';
     if (cameraErrorDiv) {
-      cameraErrorDiv.textContent = 'Camera error: Provided videoElement is not an HTMLVideoElement.';
+      cameraErrorDiv.textContent = `Camera error: ${msg}`;
       cameraErrorDiv.style.display = 'block';
     }
-    throw new Error('Provided videoElement is not an HTMLVideoElement');
+    throw new Error(msg);
   }
+
   // Stop any existing stream before requesting a new one
   if (videoElement.srcObject && videoElement.srcObject instanceof MediaStream) {
-    console.log('[initCamera] Stopping previous stream.');
     videoElement.srcObject.getTracks().forEach(track => track.stop());
     videoElement.srcObject = null;
   }
+
   try {
-    const constraints = { video: { width: 1280, height: 720 }, audio: false };
-    console.log('[initCamera] Requesting getUserMedia with constraints:', constraints);
+    const constraints = { video: { width: resolution.width, height: resolution.height }, audio: false };
+
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      const msg = 'getUserMedia is not supported in this browser';
       if (cameraErrorDiv) {
-        cameraErrorDiv.textContent = 'Camera error: getUserMedia is not supported in this browser.';
+        cameraErrorDiv.textContent = `Camera error: ${msg}`;
         cameraErrorDiv.style.display = 'block';
       }
-      throw new Error('getUserMedia is not supported in this browser');
+      throw new Error(msg);
     }
+
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    console.log('[initCamera] getUserMedia success. Stream:', stream);
+
     return new Promise((resolve, reject) => {
       videoElement.onloadedmetadata = () => {
-        console.log('[initCamera] onloadedmetadata fired. Playing video.');
         videoElement.play().then(() => {
-          console.log('[initCamera] Video playing.');
           if (cameraErrorDiv) cameraErrorDiv.style.display = 'none';
           resolve();
         }).catch(err => {
-          console.error('[initCamera] Failed to play video:', err);
+          const msg = `Failed to play video: ${err.message}`;
           if (cameraErrorDiv) {
-            cameraErrorDiv.textContent = 'Camera error: Failed to play video: ' + err.message;
+            cameraErrorDiv.textContent = `Camera error: ${msg}`;
             cameraErrorDiv.style.display = 'block';
           }
-          reject(new Error('Failed to play video: ' + err.message));
+          reject(new Error(msg));
         });
       };
       videoElement.onerror = (e) => {
-        console.error('[initCamera] Video element error:', e);
+        const msg = `Video element error: ${e?.message || e}`;
         if (cameraErrorDiv) {
-          cameraErrorDiv.textContent = 'Camera error: Video element error: ' + (e?.message || e);
+          cameraErrorDiv.textContent = `Camera error: ${msg}`;
           cameraErrorDiv.style.display = 'block';
         }
-        reject(new Error('Video element error: ' + (e?.message || e)));
+        reject(new Error(msg));
       };
       videoElement.srcObject = stream;
     });
   } catch (err) {
-    console.error('[initCamera] Unable to access webcam:', err);
+    const msg = `Unable to access webcam: ${err?.message || err}`;
     if (cameraErrorDiv) {
-      cameraErrorDiv.textContent = 'Camera error: Unable to access webcam: ' + (err && err.message ? err.message : err);
+      cameraErrorDiv.textContent = `Camera error: ${msg}`;
       cameraErrorDiv.style.display = 'block';
     }
-    throw new Error('Unable to access webcam: ' + (err && err.message ? err.message : err));
+    throw new Error(msg);
   }
 }
 
@@ -82,6 +89,7 @@ export async function initCamera(videoElement) {
  * @param {HTMLCanvasElement} canvasElement - The canvas element to draw the frame onto.
  * @param {CanvasRenderingContext2D} ctx - The 2D rendering context of the canvas.
  * @returns {void}
+ * @throws {Error} If any argument is of the wrong type or frame capture fails.
  */
 export function captureFrame(videoElement, canvasElement, ctx) {
   if (!(videoElement instanceof HTMLVideoElement)) {
@@ -96,6 +104,7 @@ export function captureFrame(videoElement, canvasElement, ctx) {
   try {
     ctx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
   } catch (err) {
-    throw new Error('Failed to capture frame: ' + (err && err.message ? err.message : err));
+    throw new Error(`Failed to capture frame: ${err?.message || err}`);
   }
 }
+

@@ -1,16 +1,22 @@
 /**
- * Perspective transform and interactive corner pin utilities using OpenCV.js and Canvas 2D API.
+ * Shared perspective transform and interactive corner pin utilities.
+ *
+ * Uses OpenCV.js for the perspective matrix and Canvas 2D API for the
+ * interactive drag-handle UI.
+ *
+ * **Config-agnostic** — no fixed config import. Default corner points
+ * are derived from the overlay canvas dimensions.
+ *
+ * @module shared/cornerPin
  */
-import { CONFIG } from '../config.js';
 
 /**
  * Builds a perspective transform (homography) matrix from 4 source and 4 destination points.
  *
  * @param {Array<{x: number, y: number}>} srcPoints - Array of 4 source points.
  * @param {Array<{x: number, y: number}>} dstPoints - Array of 4 destination points.
- * @returns {cv.Mat} 3x3 perspective transform matrix (cv.CV_64F).
- * @example
- * const mat = buildPerspectiveTransform(src, dst);
+ * @returns {cv.Mat} 3×3 perspective transform matrix (cv.CV_64F). Caller must delete.
+ * @throws {Error} If srcPoints or dstPoints do not have exactly 4 elements.
  */
 export function buildPerspectiveTransform(srcPoints, dstPoints) {
   if (srcPoints.length !== 4 || dstPoints.length !== 4) {
@@ -25,24 +31,21 @@ export function buildPerspectiveTransform(srcPoints, dstPoints) {
   } finally {
     if (srcMat) srcMat.delete();
     if (dstMat) dstMat.delete();
-    // transformMat is returned
   }
 }
 
 /**
- * Warps an array of points using a 3x3 perspective transform matrix.
+ * Warps an array of points using a 3×3 perspective transform matrix.
  *
  * @param {Array<{x: number, y: number}>} points - Array of points to warp.
- * @param {cv.Mat} transformMat - 3x3 perspective transform matrix.
+ * @param {cv.Mat} transformMat - 3×3 perspective transform matrix.
  * @returns {Array<{x: number, y: number}>} Warped points.
- * @example
- * const warped = warpPoints(points, mat);
+ * @throws {Error} If transformMat is not a 3×3 cv.Mat.
  */
 export function warpPoints(points, transformMat) {
   if (!transformMat || transformMat.rows !== 3 || transformMat.cols !== 3) {
     throw new Error('transformMat must be a 3x3 cv.Mat');
   }
-  // Extract matrix values
   const M = [];
   for (let r = 0; r < 3; ++r) {
     M[r] = [];
@@ -62,30 +65,37 @@ export function warpPoints(points, transformMat) {
  * Initializes an interactive corner pin UI on the given overlay canvas.
  *
  * @param {HTMLCanvasElement} overlayCanvas - Canvas for drawing and interaction.
- * @param {(points: Array<{x: number, y: number}>) => void} onUpdate - Callback called with new corner points after drag.
+ * @param {(points: Array<{x: number, y: number}>) => void} onUpdate - Callback with new corner points after drag.
  * @param {{initialPoints?: Array<{x: number, y: number}>, handleColor?: string, lineColor?: string, label?: string}} [opts] - Options.
- * @returns {function(): void} draw - Call this each frame to redraw the corner pin handles.
+ * @returns {function(): void} draw — Call each frame to redraw handles. Has a `.destroy()` method to remove listeners.
  */
 export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
   const ctx = overlayCanvas.getContext('2d');
   const handleColor = opts.handleColor || 'yellow';
   const lineColor = opts.lineColor || '#ff0';
   const label = opts.label || '';
-  let points = (opts.initialPoints || CONFIG.cornerPin).map(p => ({ ...p }));
+
+  // Default to full-canvas rectangle if no initial points provided
+  const defaultPoints = [
+    { x: 0, y: 0 },
+    { x: overlayCanvas.width, y: 0 },
+    { x: overlayCanvas.width, y: overlayCanvas.height },
+    { x: 0, y: overlayCanvas.height }
+  ];
+  let points = (opts.initialPoints || defaultPoints).map(p => ({ ...p }));
+
   let draggingIdx = null;
   let dragOffset = { x: 0, y: 0 };
   const HANDLE_RADIUS = 10;
   const HIT_RADIUS = 20;
-  const EDGE_INSET = HANDLE_RADIUS + 2; // visual inset for handles at canvas edges
+  const EDGE_INSET = HANDLE_RADIUS + 2;
 
-  /** Clamp a coordinate inward so handles/lines are visible at canvas edges. */
   function clampX(v) { return Math.max(EDGE_INSET, Math.min(overlayCanvas.width - EDGE_INSET, v)); }
   function clampY(v) { return Math.max(EDGE_INSET, Math.min(overlayCanvas.height - EDGE_INSET, v)); }
 
   function draw() {
     ctx.save();
 
-    // Dashed frame — clamp so it's visible even when points are on the canvas edge
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 4]);
@@ -96,7 +106,6 @@ export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Handles — drawn at clamped positions so they never clip off-screen
     for (let i = 0; i < 4; ++i) {
       const hx = clampX(points[i].x);
       const hy = clampY(points[i].y);
@@ -107,7 +116,6 @@ export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
       ctx.lineWidth = 2;
       ctx.strokeStyle = '#222';
       ctx.stroke();
-      // Corner number
       ctx.fillStyle = '#000';
       ctx.font = 'bold 11px monospace';
       ctx.textAlign = 'center';
@@ -115,7 +123,6 @@ export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
       ctx.fillText(String(i + 1), hx, hy);
     }
 
-    // Small label near handle 1 (top-left area)
     if (label) {
       const lx = clampX(points[0].x) + HANDLE_RADIUS + 6;
       const ly = clampY(points[0].y) + 1;
@@ -131,7 +138,6 @@ export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
 
   function getHandleAt(x, y) {
     for (let i = 0; i < 4; ++i) {
-      // Hit-test against the visually clamped position (where the handle is drawn)
       const hx = clampX(points[i].x);
       const hy = clampY(points[i].y);
       const dx = x - hx;
@@ -170,7 +176,6 @@ export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
       draw();
       if (onUpdate) onUpdate(points.map(p => ({ ...p })));
     } else {
-      // Change cursor if hovering over a handle
       overlayCanvas.style.cursor = getHandleAt(x, y) !== null ? 'grab' : 'default';
     }
   }
@@ -232,7 +237,6 @@ export function initCornerPinUI(overlayCanvas, onUpdate, opts = {}) {
     overlayCanvas.removeEventListener('touchend', onTouchEnd);
   };
 
-  // Return the draw function so the main loop can redraw handles each frame
   return draw;
 }
 
